@@ -1058,16 +1058,21 @@ export default function App() {
       return;
     }
 
-    // Security: Restrict admin account creation
+    // Security: Restrict admin account creation to ZADA Foods domain
     if (registerRole === 'admin') {
-      const allowedAdminEmails = [
+      const email = regEmail.trim().toLowerCase();
+      const allowedDomains = ['@zadafoods.com', '@zada.com'];
+      const allowedSpecificEmails = [
         'admin@zada.com',
         'manager@zada.com',
         'supervisor@zada.com'
       ];
       
-      if (!allowedAdminEmails.includes(regEmail.trim().toLowerCase())) {
-        Alert.alert('Access Denied', 'Admin accounts can only be created by authorized personnel. Please contact system administrator.');
+      const isAllowedDomain = allowedDomains.some(domain => email.endsWith(domain));
+      const isAllowedEmail = allowedSpecificEmails.includes(email);
+      
+      if (!isAllowedDomain && !isAllowedEmail) {
+        Alert.alert('Access Denied', 'Admin accounts can only be created with @zadafoods.com or @zada.com email addresses. Please use firstname.lastname@zadafoods.com format.');
         return;
       }
     }
@@ -2018,6 +2023,11 @@ export default function App() {
                     </Text>
                   </TouchableOpacity>
                 </View>
+                {registerRole === 'admin' && (
+                  <Text style={styles.adminEmailHint}>
+                    💡 Admin accounts require @zadafoods.com or @zada.com email address
+                  </Text>
+                )}
               </View>
               
               <TextInput style={styles.input} placeholder="Phone (optional)" value={regPhone} onChangeText={setRegPhone} keyboardType="phone-pad" />
@@ -4196,6 +4206,13 @@ const styles = StyleSheet.create({
   },
   activeRoleButtonText: {
     color: 'white',
+  },
+  adminEmailHint: {
+    fontSize: 12,
+    color: '#6B7280',
+    textAlign: 'center',
+    marginTop: 8,
+    fontStyle: 'italic',
   },
   header: {
     backgroundColor: '#0EA5E9',
