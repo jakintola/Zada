@@ -1591,18 +1591,28 @@ export default function App() {
     <View style={styles.container}>
       <StatusBar style="light" />
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>
-          Welcome, {user.name}!
-        </Text>
-        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-          {user.role === 'customer' && (
-            <TouchableOpacity style={[styles.logoutButton, { marginRight: 8, backgroundColor: '#0EA5E9' }]} onPress={openSupportChat}>
-              <Text style={styles.logoutButtonText}>Support</Text>
+        <View style={styles.headerTop}>
+          <Text style={styles.headerTitle}>
+            Welcome, {user.name}!
+          </Text>
+          <View style={styles.headerActions}>
+            <TouchableOpacity 
+              style={styles.supportButton} 
+              onPress={openSupportChat}
+            >
+              <Text style={styles.supportButtonText}>
+                {user.role === 'admin' ? '📞 Support Inbox' : '💬 Support'}
+              </Text>
+              {unreadMessages > 0 && (
+                <View style={styles.supportUnreadBadge}>
+                  <Text style={styles.supportUnreadText}>{unreadMessages}</Text>
+                </View>
+              )}
             </TouchableOpacity>
-          )}
-          <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
-            <Text style={styles.logoutButtonText}>Logout</Text>
-          </TouchableOpacity>
+            <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
+              <Text style={styles.logoutButtonText}>Logout</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </View>
 
@@ -1636,19 +1646,6 @@ export default function App() {
         </TouchableOpacity>
       )}
 
-      {/* Unread Messages Badge */}
-      {unreadMessages > 0 && (
-        <TouchableOpacity 
-          style={styles.unreadBadge}
-          onPress={() => {
-            clearUnreadMessages();
-            openSupportChat();
-          }}
-          activeOpacity={0.8}
-        >
-          <Text style={styles.unreadBadgeText}>{unreadMessages}</Text>
-        </TouchableOpacity>
-      )}
 
               {user.role === 'admin' && (
           <View style={styles.adminNav}>
@@ -3790,14 +3787,53 @@ const styles = StyleSheet.create({
     backgroundColor: '#0EA5E9',
     padding: 20,
     paddingTop: 50,
+  },
+  headerTop: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
   },
   headerTitle: {
     color: 'white',
     fontSize: 20,
     fontWeight: '600',
+  },
+  supportButton: {
+    backgroundColor: '#10B981',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    position: 'relative',
+  },
+  supportButtonText: {
+    color: 'white',
+    fontWeight: '600',
+    fontSize: 14,
+  },
+  supportUnreadBadge: {
+    position: 'absolute',
+    top: -6,
+    right: -6,
+    backgroundColor: '#EF4444',
+    borderRadius: 10,
+    minWidth: 20,
+    height: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: '#0EA5E9',
+  },
+  supportUnreadText: {
+    color: 'white',
+    fontSize: 12,
+    fontWeight: 'bold',
   },
   logoutButton: {
     backgroundColor: 'rgba(255, 255, 255, 0.2)',
@@ -6644,7 +6680,7 @@ const styles = StyleSheet.create({
   
   // Notification Styles
   notificationBanner: {
-    backgroundColor: '#0EA5E9',
+    backgroundColor: '#10B981',
     paddingHorizontal: 16,
     paddingVertical: 12,
     marginHorizontal: 16,
@@ -6656,7 +6692,7 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 3,
     borderWidth: 1,
-    borderColor: '#0284C7',
+    borderColor: '#059669',
   },
   notificationContent: {
     flexDirection: 'row',
@@ -6686,23 +6722,6 @@ const styles = StyleSheet.create({
   notificationCloseText: {
     color: 'white',
     fontSize: 16,
-    fontWeight: 'bold',
-  },
-  unreadBadge: {
-    position: 'absolute',
-    top: 50,
-    right: 20,
-    backgroundColor: '#EF4444',
-    borderRadius: 12,
-    minWidth: 24,
-    height: 24,
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 1000,
-  },
-  unreadBadgeText: {
-    color: 'white',
-    fontSize: 12,
     fontWeight: 'bold',
   },
   chatMessagesContainer: {
