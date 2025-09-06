@@ -338,6 +338,11 @@ export default function App() {
   const [showCustomerOrderModal, setShowCustomerOrderModal] = useState(false);
   const [customerOrderDetails, setCustomerOrderDetails] = useState<any>(null);
   
+  // Notification State
+  const [showNotification, setShowNotification] = useState(false);
+  const [notificationMessage, setNotificationMessage] = useState('');
+  const [unreadMessages, setUnreadMessages] = useState(0);
+  
   // Enhanced Customer State
   const [customerView, setCustomerView] = useState<'home' | 'products' | 'cart' | 'orders' | 'profile'>('home');
   const [cart, setCart] = useState<Array<{ product: Product; quantity: number; addedAt: Date }>>([]);
@@ -412,6 +417,7 @@ export default function App() {
     setChatOrderId(null);
     setShowChat(true);
     setIsChatLoading(true);
+    clearUnreadMessages(); // Clear unread count when opening chat
     
     // Check if Supabase is properly configured
     if (!process.env.EXPO_PUBLIC_SUPABASE_URL || process.env.EXPO_PUBLIC_SUPABASE_URL === 'https://placeholder.supabase.co') {
@@ -425,12 +431,9 @@ export default function App() {
         const supportMessages = messages.filter((msg: any) => msg.type === 'support');
         setChatMessages(supportMessages);
       } else {
-        // Customer sees only their own support messages
-        const customerId = user?.email || '';
-        const customerMessages = messages.filter((msg: any) => 
-          msg.type === 'support' && msg.sender_id === customerId
-        );
-        setChatMessages(customerMessages);
+        // Customer sees all support messages (both their own and admin replies)
+        const supportMessages = messages.filter((msg: any) => msg.type === 'support');
+        setChatMessages(supportMessages);
       }
       
       setIsChatLoading(false);
@@ -453,26 +456,34 @@ export default function App() {
         .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: 'type=eq.support' }, (payload: any) => {
           const msg = payload.new as ChatMessage;
           setChatMessages(prev => [...prev, msg]);
+          
+          // Show notification for new messages (not from current user)
+          if (msg.sender_role !== 'admin') {
+            showMessageNotification(`New message from customer: ${msg.content.substring(0, 50)}...`);
+          }
         })
         .subscribe();
     } else {
-      // Customer sees only their own support messages
-      const customerId = user?.email || '';
+      // Customer sees all support messages (both their own and admin replies)
       const { data, error } = await supabase
         .from('messages')
         .select('*')
         .eq('type', 'support')
-        .eq('sender_id', customerId)
         .order('created_at', { ascending: true });
       if (!error && data) setChatMessages(data as ChatMessage[]);
       
-      // Subscribe to customer's own support messages
+      // Subscribe to all support messages
       chatSubscriptionRef.current?.unsubscribe?.();
       chatSubscriptionRef.current = supabase
         .channel('customer-support-ch')
-        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `sender_id=eq.${customerId}` }, (payload: any) => {
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: 'type=eq.support' }, (payload: any) => {
           const msg = payload.new as ChatMessage;
-          if (msg.type === 'support') setChatMessages(prev => [...prev, msg]);
+          setChatMessages(prev => [...prev, msg]);
+          
+          // Show notification for new messages (not from current user)
+          if (msg.sender_role === 'admin') {
+            showMessageNotification(`New reply from admin: ${msg.content.substring(0, 50)}...`);
+          }
         })
         .subscribe();
     }
@@ -485,6 +496,54 @@ export default function App() {
     setChatOrderId(null);
     setChatMessages([]);
     chatSubscriptionRef.current?.unsubscribe?.();
+  };
+
+  // Notification Functions
+  const showMessageNotification = (message: string) => {
+    setNotificationMessage(message);
+    setShowNotification(true);
+    setUnreadMessages(prev => prev + 1);
+    
+    // Auto-hide notification after 3 seconds
+    setTimeout(() => {
+      setShowNotification(false);
+    }, 3000);
+  };
+
+  const clearUnreadMessages = () => {
+    setUnreadMessages(0);
+  };
+
+  // Check for new messages in local storage (for fallback mode)
+  const checkForNewMessages = async () => {
+    if (!process.env.EXPO_PUBLIC_SUPABASE_URL || process.env.EXPO_PUBLIC_SUPABASE_URL === 'https://placeholder.supabase.co') {
+      const storedMessages = await storage.getItem('@zada_chat_messages') || '[]';
+      const messages = JSON.parse(storedMessages);
+      
+      if (user?.role === 'admin') {
+        // Admin gets notified of new customer messages
+        const newCustomerMessages = messages.filter((msg: any) => 
+          msg.type === 'support' && 
+          msg.sender_role === 'customer' && 
+          !chatMessages.some(existing => existing.id === msg.id)
+        );
+        
+        if (newCustomerMessages.length > 0) {
+          showMessageNotification(`New message from customer: ${newCustomerMessages[0].content.substring(0, 50)}...`);
+        }
+      } else {
+        // Customer gets notified of new admin messages
+        const newAdminMessages = messages.filter((msg: any) => 
+          msg.type === 'support' && 
+          msg.sender_role === 'admin' && 
+          !chatMessages.some(existing => existing.id === msg.id)
+        );
+        
+        if (newAdminMessages.length > 0) {
+          showMessageNotification(`New reply from admin: ${newAdminMessages[0].content.substring(0, 50)}...`);
+        }
+      }
+    }
   };
 
   const sendChatMessage = async () => {
@@ -555,6 +614,12 @@ export default function App() {
       Alert.alert('Error', 'Failed to send message. Please try again.');
     }
   };
+
+  // Check for new messages every 5 seconds
+  useEffect(() => {
+    const interval = setInterval(checkForNewMessages, 5000);
+    return () => clearInterval(interval);
+  }, [chatMessages, user]);
 
   useEffect(() => {
     (async () => {
@@ -1540,6 +1605,29 @@ export default function App() {
           </TouchableOpacity>
         </View>
       </View>
+
+      {/* Notification Banner */}
+      {showNotification && (
+        <View style={styles.notificationBanner}>
+          <View style={styles.notificationContent}>
+            <Text style={styles.notificationIcon}>🔔</Text>
+            <Text style={styles.notificationText}>{notificationMessage}</Text>
+            <TouchableOpacity 
+              style={styles.notificationClose}
+              onPress={() => setShowNotification(false)}
+            >
+              <Text style={styles.notificationCloseText}>✕</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
+      {/* Unread Messages Badge */}
+      {unreadMessages > 0 && (
+        <View style={styles.unreadBadge}>
+          <Text style={styles.unreadBadgeText}>{unreadMessages}</Text>
+        </View>
+      )}
 
               {user.role === 'admin' && (
           <View style={styles.adminNav}>
@@ -6531,6 +6619,62 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#64748B',
     fontWeight: '600',
+  },
+  
+  // Notification Styles
+  notificationBanner: {
+    backgroundColor: '#0EA5E9',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    marginHorizontal: 16,
+    marginTop: 8,
+    borderRadius: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  notificationContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  notificationIcon: {
+    fontSize: 20,
+    marginRight: 12,
+  },
+  notificationText: {
+    flex: 1,
+    color: 'white',
+    fontSize: 14,
+    fontWeight: '500',
+    lineHeight: 20,
+  },
+  notificationClose: {
+    marginLeft: 12,
+    padding: 4,
+  },
+  notificationCloseText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  unreadBadge: {
+    position: 'absolute',
+    top: 50,
+    right: 20,
+    backgroundColor: '#EF4444',
+    borderRadius: 12,
+    minWidth: 24,
+    height: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 1000,
+  },
+  unreadBadgeText: {
+    color: 'white',
+    fontSize: 12,
+    fontWeight: 'bold',
   },
   chatMessagesContainer: {
     flex: 1,
