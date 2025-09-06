@@ -114,15 +114,38 @@ const getUserStorageKey = (userId: string, key: string) => `@zada_user_${userId}
 // Load user-specific admin data
 const loadUserAdminData = async (userId: string) => {
   try {
-    const productsKey = getUserStorageKey(userId, 'admin_products');
-    const ordersKey = getUserStorageKey(userId, 'admin_orders');
+    // Try Supabase first for orders
+    let orders = [...mockOrders];
+    if (process.env.EXPO_PUBLIC_SUPABASE_URL && process.env.EXPO_PUBLIC_SUPABASE_URL !== 'https://placeholder.supabase.co') {
+      const { data: ordersData, error: ordersError } = await supabase
+        .from('orders')
+        .select('*')
+        .eq('admin_id', userId)
+        .order('created_at', { ascending: false });
+      
+      if (!ordersError && ordersData) {
+        orders = ordersData.map(order => ({
+          ...order,
+          orderDate: new Date(order.order_date || order.created_at),
+          updatedAt: order.updated_at ? new Date(order.updated_at) : new Date()
+        }));
+        console.log('Loaded orders from Supabase:', orders.length);
+      }
+    } else {
+      // Fallback to localStorage
+      const ordersKey = getUserStorageKey(userId, 'admin_orders');
+      const storedOrders = await storage.getItem(ordersKey);
+      if (storedOrders) {
+        orders = JSON.parse(storedOrders);
+      }
+    }
     
-    const storedProducts = await storage.getItem(productsKey);
-    const storedOrders = await storage.getItem(ordersKey);
+    // Products are global, so load from global products
+    const products = await loadProducts();
     
     return {
-      products: storedProducts ? JSON.parse(storedProducts) : [...mockProducts],
-      orders: storedOrders ? JSON.parse(storedOrders) : [...mockOrders]
+      products: products,
+      orders: orders
     };
   } catch (error) {
     console.error('Failed to load user admin data:', error);
@@ -136,10 +159,46 @@ const loadUserAdminData = async (userId: string) => {
 // Save user-specific admin data
 const saveUserAdminData = async (userId: string, products: Product[], orders: AdminOrder[]) => {
   try {
-    const productsKey = getUserStorageKey(userId, 'admin_products');
-    const ordersKey = getUserStorageKey(userId, 'admin_orders');
+    // Save products globally (they're shared)
+    await saveProducts(products);
     
-    await storage.setItem(productsKey, JSON.stringify(products));
+    // Try Supabase first for orders
+    if (process.env.EXPO_PUBLIC_SUPABASE_URL && process.env.EXPO_PUBLIC_SUPABASE_URL !== 'https://placeholder.supabase.co') {
+      // Clear existing orders for this admin
+      await supabase.from('orders').delete().eq('admin_id', userId);
+      
+      // Insert new orders
+      const { error } = await supabase
+        .from('orders')
+        .insert(orders.map(order => ({
+          id: order.id,
+          admin_id: userId,
+          customer_name: order.customerName,
+          customer_email: order.customerEmail,
+          customer_phone: order.customerPhone,
+          delivery_address: order.deliveryAddress,
+          delivery_zone: order.deliveryZone,
+          total: order.total,
+          status: order.status,
+          priority: order.priority,
+          notes: order.notes,
+          items: JSON.stringify(order.items),
+          order_date: order.orderDate.toISOString(),
+          estimated_delivery_time: order.estimatedDeliveryTime,
+          order_capacity: order.orderCapacity,
+          cluster_id: order.clusterId,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        })));
+      
+      if (!error) {
+        console.log('Saved orders to Supabase:', orders.length);
+        return;
+      }
+    }
+    
+    // Fallback to localStorage
+    const ordersKey = getUserStorageKey(userId, 'admin_orders');
     await storage.setItem(ordersKey, JSON.stringify(orders));
   } catch (error) {
     console.error('Failed to save user admin data:', error);
@@ -149,6 +208,20 @@ const saveUserAdminData = async (userId: string, products: Product[], orders: Ad
 // Load products for all users (customers and admin)
 const loadProducts = async () => {
   try {
+    // Try Supabase first
+    if (process.env.EXPO_PUBLIC_SUPABASE_URL && process.env.EXPO_PUBLIC_SUPABASE_URL !== 'https://placeholder.supabase.co') {
+      const { data, error } = await supabase
+        .from('products')
+        .select('*')
+        .order('created_at', { ascending: true });
+      
+      if (!error && data) {
+        console.log('Loaded products from Supabase:', data.length);
+        return data;
+      }
+    }
+    
+    // Fallback to localStorage
     const storedProducts = await storage.getItem('@zada_products');
     if (storedProducts) {
       return JSON.parse(storedProducts);
@@ -164,6 +237,26 @@ const loadProducts = async () => {
 // Save products globally
 const saveProducts = async (products: Product[]) => {
   try {
+    // Try Supabase first
+    if (process.env.EXPO_PUBLIC_SUPABASE_URL && process.env.EXPO_PUBLIC_SUPABASE_URL !== 'https://placeholder.supabase.co') {
+      // Clear existing products and insert new ones
+      await supabase.from('products').delete().neq('id', '');
+      
+      const { error } = await supabase
+        .from('products')
+        .insert(products.map(product => ({
+          ...product,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        })));
+      
+      if (!error) {
+        console.log('Saved products to Supabase:', products.length);
+        return;
+      }
+    }
+    
+    // Fallback to localStorage
     await storage.setItem('@zada_products', JSON.stringify(products));
   } catch (error) {
     console.error('Failed to save products:', error);
@@ -172,6 +265,27 @@ const saveProducts = async (products: Product[]) => {
 
 const loadUsersFromStorage = async (): Promise<AppUser[]> => {
   try {
+    // Try Supabase first
+    if (process.env.EXPO_PUBLIC_SUPABASE_URL && process.env.EXPO_PUBLIC_SUPABASE_URL !== 'https://placeholder.supabase.co') {
+      const { data, error } = await supabase
+        .from('users')
+        .select('*')
+        .order('created_at', { ascending: true });
+      
+      if (!error && data) {
+        const users = data.map(user => ({
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          createdAt: user.created_at ? new Date(user.created_at) : new Date()
+        }));
+        console.log('Loaded users from Supabase:', users.length);
+        return users;
+      }
+    }
+    
+    // Fallback to localStorage
     const raw = await storage.getItem(STORAGE_KEYS.users);
     return raw ? JSON.parse(raw) : [];
   } catch (e) {
@@ -182,6 +296,29 @@ const loadUsersFromStorage = async (): Promise<AppUser[]> => {
 
 const saveUsersToStorage = async (users: AppUser[]) => {
   try {
+    // Try Supabase first
+    if (process.env.EXPO_PUBLIC_SUPABASE_URL && process.env.EXPO_PUBLIC_SUPABASE_URL !== 'https://placeholder.supabase.co') {
+      // Clear existing users and insert new ones
+      await supabase.from('users').delete().neq('id', '');
+      
+      const { error } = await supabase
+        .from('users')
+        .insert(users.map(user => ({
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          created_at: user.createdAt.toISOString(),
+          updated_at: new Date().toISOString()
+        })));
+      
+      if (!error) {
+        console.log('Saved users to Supabase:', users.length);
+        return;
+      }
+    }
+    
+    // Fallback to localStorage
     await storage.setItem(STORAGE_KEYS.users, JSON.stringify(users));
   } catch (e) {
     console.error('Failed to save users', e);
@@ -519,22 +656,22 @@ export default function App() {
     
     if (user?.role === 'admin') {
       // Admin sees all support messages from all customers
-      const { data, error } = await supabase
-        .from('messages')
-        .select('*')
-        .eq('type', 'support')
-        .order('created_at', { ascending: true });
+    const { data, error } = await supabase
+      .from('messages')
+      .select('*')
+      .eq('type', 'support')
+      .order('created_at', { ascending: true });
       if (!error && data) {
         setChatMessages(data as ChatMessage[]);
         markMessagesAsSeen(data as ChatMessage[]); // Mark all loaded messages as seen
       }
       
       // Subscribe to all support messages
-      chatSubscriptionRef.current?.unsubscribe?.();
-      chatSubscriptionRef.current = supabase
+    chatSubscriptionRef.current?.unsubscribe?.();
+    chatSubscriptionRef.current = supabase
         .channel('admin-support-ch')
         .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: 'type=eq.support' }, (payload: any) => {
-          const msg = payload.new as ChatMessage;
+        const msg = payload.new as ChatMessage;
           setChatMessages(prev => [...prev, msg]);
           
           // Show notification for new messages (not from current user)
@@ -542,8 +679,8 @@ export default function App() {
             showMessageNotification(`New message from customer: ${msg.content.substring(0, 50)}...`);
             markMessagesAsSeen([msg]); // Mark as seen to prevent re-notification
           }
-        })
-        .subscribe();
+      })
+      .subscribe();
     } else {
       // Customer sees all support messages (both their own and admin replies)
       const { data, error } = await supabase
@@ -1299,22 +1436,22 @@ export default function App() {
   // Enhanced Order Status Update with Customer Sync
   const updateOrderStatus = async (orderId: string, newStatus: 'pending' | 'confirmed' | 'out_for_delivery' | 'delivered') => {
     try {
-      // Update admin orders
-      const updatedAdminOrders = adminOrders.map(order => 
+    // Update admin orders
+    const updatedAdminOrders = adminOrders.map(order => 
         order.id === orderId ? { ...order, status: newStatus, updatedAt: new Date() } : order
-      );
-      
-      // Update the admin orders state to reflect changes in the UI
-      setAdminOrders(updatedAdminOrders);
-      
-      // Update customer orders if they exist
-      const updatedCustomerOrders = customerOrders.map(order => 
+    );
+    
+    // Update the admin orders state to reflect changes in the UI
+    setAdminOrders(updatedAdminOrders);
+    
+    // Update customer orders if they exist
+    const updatedCustomerOrders = customerOrders.map(order => 
         order.id === orderId ? { ...order, status: newStatus, updatedAt: new Date() } : order
-      );
-      
+    );
+    
       // Update customer orders state
-      setCustomerOrders(updatedCustomerOrders);
-      
+    setCustomerOrders(updatedCustomerOrders);
+    
       // Save to user-specific admin data
       if (user?.id) {
         await saveUserAdminData(user.id, adminProducts, updatedAdminOrders);
@@ -1325,46 +1462,46 @@ export default function App() {
       Alert.alert('Success', `Order #${orderId} status updated to ${statusText}`);
       
       console.log('Order status updated:', { orderId, newStatus, adminOrders: updatedAdminOrders.length });
-      
-      // Keep delivery routes in sync: when moving to out_for_delivery, attach to a route; when delivered, remove
-      const targetOrder = updatedAdminOrders.find(o => o.id === orderId);
-      if (targetOrder) {
-        if (newStatus === 'out_for_delivery') {
-          // Simple sync: ensure a route exists per zone and append order
-          setAdminDeliveryRoutes(prev => {
-            const existing = prev.find(r => r.zone === targetOrder.deliveryZone && r.status !== 'completed');
-            if (existing) {
-              const updated = { ...existing, orders: [...existing.orders, targetOrder.id], totalOrders: existing.totalOrders + 1 };
-              return prev.map(r => r.id === existing.id ? updated : r);
-            }
-            const newRoute: DeliveryRoute = {
-              id: `route-${Date.now()}`,
-              driver: 'Unassigned',
-              vehicle: 'TBD',
-              zone: targetOrder.deliveryZone,
-              orders: [targetOrder.id],
-              totalOrders: 1,
-              estimatedTime: '60 min',
-              startTime: 'Now',
-              endTime: 'TBD',
-              status: 'in_progress',
-              route: [{ orderId: targetOrder.id, address: targetOrder.deliveryAddress, customer: targetOrder.customerName, priority: targetOrder.priority, estimatedTime: 'TBD' }],
-              clusterId: targetOrder.clusterId || undefined,
-              totalValue: targetOrder.total,
-              totalCapacity: targetOrder.orderCapacity,
-            };
-            return [...prev, newRoute];
-          });
-        }
-        if (newStatus === 'delivered') {
-          setAdminDeliveryRoutes(prev => prev.map(r => ({
-            ...r,
-            orders: r.orders.filter(id => id !== orderId),
-            totalOrders: r.orders.includes(orderId) ? Math.max(0, r.totalOrders - 1) : r.totalOrders,
-            route: r.route.filter(s => s.orderId !== orderId),
-            status: r.orders.length === 1 && r.orders[0] === orderId ? 'completed' : r.status,
-          })));
-        }
+    
+    // Keep delivery routes in sync: when moving to out_for_delivery, attach to a route; when delivered, remove
+    const targetOrder = updatedAdminOrders.find(o => o.id === orderId);
+    if (targetOrder) {
+      if (newStatus === 'out_for_delivery') {
+        // Simple sync: ensure a route exists per zone and append order
+        setAdminDeliveryRoutes(prev => {
+          const existing = prev.find(r => r.zone === targetOrder.deliveryZone && r.status !== 'completed');
+          if (existing) {
+            const updated = { ...existing, orders: [...existing.orders, targetOrder.id], totalOrders: existing.totalOrders + 1 };
+            return prev.map(r => r.id === existing.id ? updated : r);
+          }
+          const newRoute: DeliveryRoute = {
+            id: `route-${Date.now()}`,
+            driver: 'Unassigned',
+            vehicle: 'TBD',
+            zone: targetOrder.deliveryZone,
+            orders: [targetOrder.id],
+            totalOrders: 1,
+            estimatedTime: '60 min',
+            startTime: 'Now',
+            endTime: 'TBD',
+            status: 'in_progress',
+            route: [{ orderId: targetOrder.id, address: targetOrder.deliveryAddress, customer: targetOrder.customerName, priority: targetOrder.priority, estimatedTime: 'TBD' }],
+            clusterId: targetOrder.clusterId || undefined,
+            totalValue: targetOrder.total,
+            totalCapacity: targetOrder.orderCapacity,
+          };
+          return [...prev, newRoute];
+        });
+      }
+      if (newStatus === 'delivered') {
+        setAdminDeliveryRoutes(prev => prev.map(r => ({
+          ...r,
+          orders: r.orders.filter(id => id !== orderId),
+          totalOrders: r.orders.includes(orderId) ? Math.max(0, r.totalOrders - 1) : r.totalOrders,
+          route: r.route.filter(s => s.orderId !== orderId),
+          status: r.orders.length === 1 && r.orders[0] === orderId ? 'completed' : r.status,
+        })));
+      }
       }
     } catch (error) {
       console.error('Failed to update order status:', error);
@@ -1394,13 +1531,13 @@ export default function App() {
   const updateProductDetails = async (productId: string, updates: Partial<Product>) => {
     try {
       const updatedProducts = products.map(product => 
-        product.id === productId ? { ...product, ...updates } : product
-      );
-      
+      product.id === productId ? { ...product, ...updates } : product
+    );
+    
       // Update both products and adminProducts
       setProducts(updatedProducts);
-      setAdminProducts(updatedProducts);
-      
+    setAdminProducts(updatedProducts);
+    
       // Save to storage
       await saveProducts(updatedProducts);
       
@@ -1917,9 +2054,9 @@ export default function App() {
       <StatusBar style="light" />
       <View style={styles.header}>
         <View style={styles.headerTop}>
-          <Text style={styles.headerTitle}>
-            Welcome, {user.name}!
-          </Text>
+        <Text style={styles.headerTitle}>
+          Welcome, {user.name}!
+        </Text>
           <View style={styles.headerActions}>
             <TouchableOpacity 
               style={styles.supportButton} 
@@ -1934,9 +2071,9 @@ export default function App() {
                 </View>
               )}
             </TouchableOpacity>
-            <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
-              <Text style={styles.logoutButtonText}>Logout</Text>
-            </TouchableOpacity>
+          <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
+            <Text style={styles.logoutButtonText}>Logout</Text>
+          </TouchableOpacity>
           </View>
         </View>
       </View>
@@ -2877,42 +3014,42 @@ export default function App() {
                 {(() => {
                   const analytics = calculateRealTimeAnalytics();
                   return (
-                    <View style={styles.analyticsGrid}>
-                      <View style={styles.analyticsCard}>
-                        <Text style={styles.analyticsTitle}>Revenue Trends</Text>
+                <View style={styles.analyticsGrid}>
+                  <View style={styles.analyticsCard}>
+                    <Text style={styles.analyticsTitle}>Revenue Trends</Text>
                         <Text style={styles.analyticsValue}>₦{analytics.monthlyRevenue.toLocaleString()}</Text>
-                        <Text style={styles.analyticsSubtitle}>Monthly Revenue</Text>
-                        <View style={styles.trendIndicator}>
+                    <Text style={styles.analyticsSubtitle}>Monthly Revenue</Text>
+                    <View style={styles.trendIndicator}>
                           <Text style={[styles.trendText, { color: analytics.revenueGrowth >= 0 ? '#10B981' : '#EF4444' }]}>
                             {analytics.revenueGrowth >= 0 ? '↗' : '↘'} {Math.abs(analytics.revenueGrowth).toFixed(1)}% vs last month
                           </Text>
-                        </View>
-                      </View>
-                      <View style={styles.analyticsCard}>
-                        <Text style={styles.analyticsTitle}>Customer Growth</Text>
+                    </View>
+                  </View>
+                  <View style={styles.analyticsCard}>
+                    <Text style={styles.analyticsTitle}>Customer Growth</Text>
                         <Text style={styles.analyticsValue}>+{analytics.newCustomersThisMonth}</Text>
                         <Text style={styles.analyticsSubtitle}>New Customers This Month</Text>
-                        <View style={styles.trendIndicator}>
+                    <View style={styles.trendIndicator}>
                           <Text style={styles.trendText}>📈 {analytics.totalCustomers} total customers</Text>
-                        </View>
-                      </View>
-                      <View style={styles.analyticsCard}>
-                        <Text style={styles.analyticsTitle}>Order Fulfillment</Text>
+                    </View>
+                  </View>
+                  <View style={styles.analyticsCard}>
+                    <Text style={styles.analyticsTitle}>Order Fulfillment</Text>
                         <Text style={styles.analyticsValue}>{analytics.fulfillmentRate.toFixed(1)}%</Text>
                         <Text style={styles.analyticsSubtitle}>Delivery Success Rate</Text>
-                        <View style={styles.trendIndicator}>
+                    <View style={styles.trendIndicator}>
                           <Text style={styles.trendText}>📦 {analytics.deliveredOrders}/{analytics.totalOrders} orders delivered</Text>
-                        </View>
-                      </View>
-                      <View style={styles.analyticsCard}>
-                        <Text style={styles.analyticsTitle}>Inventory Turnover</Text>
-                        <Text style={styles.analyticsValue}>{analytics.turnoverRate.toFixed(1)}x</Text>
-                        <Text style={styles.analyticsSubtitle}>Annual Rate</Text>
-                        <View style={styles.trendIndicator}>
-                          <Text style={styles.trendText}>🔄 Real-time calculation</Text>
-                        </View>
-                      </View>
                     </View>
+                  </View>
+                  <View style={styles.analyticsCard}>
+                    <Text style={styles.analyticsTitle}>Inventory Turnover</Text>
+                        <Text style={styles.analyticsValue}>{analytics.turnoverRate.toFixed(1)}x</Text>
+                    <Text style={styles.analyticsSubtitle}>Annual Rate</Text>
+                    <View style={styles.trendIndicator}>
+                          <Text style={styles.trendText}>🔄 Real-time calculation</Text>
+                    </View>
+                  </View>
+                </View>
                   );
                 })()}
               </View>
@@ -3005,7 +3142,7 @@ export default function App() {
                       <Text style={styles.notificationTitle}>{notification.title}</Text>
                       <Text style={styles.notificationText}>{notification.text}</Text>
                       <Text style={styles.notificationTime}>{notification.time}</Text>
-                    </View>
+                </View>
                   ));
                 })()}
               </View>
@@ -3555,7 +3692,7 @@ export default function App() {
                         hour: '2-digit',
                         minute: '2-digit'
                       })}
-                    </Text>
+                      </Text>
                     
                     {/* Order Items */}
                     <View style={styles.orderDetailsSection}>
@@ -3582,7 +3719,7 @@ export default function App() {
                           </View>
                         </View>
                       )}
-                    </View>
+                </View>
                     
                     {/* Order Summary */}
                     <View style={styles.orderDetailsSection}>
@@ -3624,10 +3761,10 @@ export default function App() {
                     <Text style={styles.modalCancelButtonText}>Close</Text>
                   </TouchableOpacity>
                   {customerOrderDetails && (
-                    <TouchableOpacity 
-                      style={styles.modalConfirmButton}
-                      onPress={() => {
-                        setShowCustomerOrderModal(false);
+                  <TouchableOpacity 
+                    style={styles.modalConfirmButton}
+                    onPress={() => {
+                      setShowCustomerOrderModal(false);
                         // Reorder functionality
                         if (customerOrderDetails.items) {
                           customerOrderDetails.items.forEach((item: OrderItem) => {
@@ -3637,12 +3774,12 @@ export default function App() {
                             }
                           });
                           Alert.alert('Added to Cart', `${customerOrderDetails.items.length} items added to your cart`);
-                          setCustomerView('cart');
+                      setCustomerView('cart');
                         }
-                      }}
-                    >
+                    }}
+                  >
                       <Text style={styles.modalConfirmButtonText}>🔄 Reorder</Text>
-                    </TouchableOpacity>
+                  </TouchableOpacity>
                   )}
                 </View>
               </View>
