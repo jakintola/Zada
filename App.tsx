@@ -1058,6 +1058,20 @@ export default function App() {
       return;
     }
 
+    // Security: Restrict admin account creation
+    if (registerRole === 'admin') {
+      const allowedAdminEmails = [
+        'admin@zada.com',
+        'manager@zada.com',
+        'supervisor@zada.com'
+      ];
+      
+      if (!allowedAdminEmails.includes(regEmail.trim().toLowerCase())) {
+        Alert.alert('Access Denied', 'Admin accounts can only be created by authorized personnel. Please contact system administrator.');
+        return;
+      }
+    }
+
     const emailTaken = users.some(u => u.email.toLowerCase() === regEmail.toLowerCase());
     if (emailTaken) {
       Alert.alert('Email in use', 'An account with this email already exists');
@@ -2188,25 +2202,25 @@ export default function App() {
 
                 <View style={styles.statCard}>
                   <Text style={styles.statTitle}>Total Revenue</Text>
-                  <Text style={styles.statValue}>₦{(mockAnalytics.totalRevenue / 1000000).toFixed(1)}M</Text>
-                  <Text style={styles.statGrowth}>+12.5% this month</Text>
+                  <Text style={styles.statValue}>₦{adminOrders.reduce((sum, order) => sum + order.total, 0).toLocaleString()}</Text>
+                  <Text style={styles.statGrowth}>All time revenue</Text>
                 </View>
                 
                 <View style={styles.statCard}>
                   <Text style={styles.statTitle}>Total Orders</Text>
-                  <Text style={styles.statValue}>{mockAnalytics.totalOrders.toLocaleString()}</Text>
-                  <Text style={styles.statGrowth}>+8.3% this month</Text>
+                  <Text style={styles.statValue}>{adminOrders.length}</Text>
+                  <Text style={styles.statGrowth}>All time orders</Text>
                 </View>
                 
                 <View style={styles.statCard}>
                   <Text style={styles.statTitle}>Active Customers</Text>
-                  <Text style={styles.statValue}>{mockAnalytics.totalCustomers.toLocaleString()}</Text>
-                  <Text style={styles.statGrowth}>+15.7% this month</Text>
+                  <Text style={styles.statValue}>{users.filter(u => u.role === 'customer').length}</Text>
+                  <Text style={styles.statGrowth}>Total registered customers</Text>
                 </View>
 
                 <View style={styles.statCard}>
                   <Text style={styles.statTitle}>Pending Deliveries</Text>
-                  <Text style={styles.statValue}>{mockAnalytics.pendingDeliveries}</Text>
+                  <Text style={styles.statValue}>{adminOrders.filter(o => o.status === 'pending' || o.status === 'confirmed').length}</Text>
                   <Text style={styles.statGrowth}>Requires attention</Text>
                 </View>
 
@@ -2272,31 +2286,20 @@ export default function App() {
                 <TouchableOpacity 
                   style={styles.addProductButton}
                   onPress={() => {
-                    Alert.prompt(
-                      'Add New Product',
-                      'Enter product name:',
-                      [
-                        { text: 'Cancel', style: 'cancel' },
-                        { 
-                          text: 'Add', 
-                          onPress: (productName) => {
-                            if (productName) {
-                              addNewProduct({
-                                name: productName,
-                                price: 0,
-                                stock: 0,
-                                minStock: 10,
-                                category: 'accessories',
-                                supplier: 'ZADA Equipment',
-                                image: '📦',
-                                description: 'New product description',
-                                features: ['New', 'Quality', 'Affordable']
-                              });
-                            }
-                          }
-                        }
-                      ]
-                    );
+                    const productName = prompt('Enter product name:');
+                    if (productName) {
+                      addNewProduct({
+                        name: productName,
+                        price: 0,
+                        stock: 0,
+                        minStock: 10,
+                        category: 'accessories',
+                        supplier: 'ZADA Equipment',
+                        image: '📦',
+                        description: 'New product description',
+                        features: ['New', 'Quality', 'Affordable']
+                      });
+                    }
                   }}
                 >
                   <Text style={styles.addProductButtonText}>➕ Add New Product</Text>
@@ -2326,22 +2329,15 @@ export default function App() {
                       <TouchableOpacity 
                         style={styles.editButton}
                         onPress={() => {
-                          Alert.prompt(
-                            'Edit Stock',
-                            `Current stock: ${product.stock}`,
-                            [
-                              { text: 'Cancel', style: 'cancel' },
-                              { 
-                                text: 'Update', 
-                                onPress: (newStock) => {
-                                  const stock = parseInt(newStock || '0');
-                                  if (!isNaN(stock) && stock >= 0) {
-                                    updateProductDetails(product.id, { stock });
-                                  }
-                                }
-                              }
-                            ]
-                          );
+                          const newStock = prompt(`Edit Stock\nCurrent stock: ${product.stock}\nEnter new stock:`, product.stock.toString());
+                          if (newStock) {
+                            const stock = parseInt(newStock);
+                            if (!isNaN(stock) && stock >= 0) {
+                              updateProductDetails(product.id, { stock });
+                            } else {
+                              alert('Please enter a valid number');
+                            }
+                          }
                         }}
                       >
                         <Text style={styles.editButtonText}>📊 Update Stock</Text>
@@ -2350,22 +2346,15 @@ export default function App() {
                       <TouchableOpacity 
                         style={styles.editButton}
                         onPress={() => {
-                          Alert.prompt(
-                            'Edit Price',
-                            `Current price: ₦${product.price}`,
-                            [
-                              { text: 'Cancel', style: 'cancel' },
-                              { 
-                                text: 'Update', 
-                                onPress: (newPrice) => {
-                                  const price = parseInt(newPrice || '0');
-                                  if (!isNaN(price) && price >= 0) {
-                                    updateProductDetails(product.id, { price });
-                                  }
-                                }
-                              }
-                            ]
-                          );
+                          const newPrice = prompt(`Edit Price\nCurrent price: ₦${product.price}\nEnter new price:`, product.price.toString());
+                          if (newPrice) {
+                            const price = parseInt(newPrice);
+                            if (!isNaN(price) && price >= 0) {
+                              updateProductDetails(product.id, { price });
+                            } else {
+                              alert('Please enter a valid number');
+                            }
+                          }
                         }}
                       >
                         <Text style={styles.editButtonText}>💰 Update Price</Text>
@@ -2374,22 +2363,15 @@ export default function App() {
                       <TouchableOpacity 
                         style={styles.editButton}
                         onPress={() => {
-                          Alert.prompt(
-                            'Edit Min Stock',
-                            `Current min stock: ${product.minStock}`,
-                            [
-                              { text: 'Cancel', style: 'cancel' },
-                              { 
-                                text: 'Update', 
-                                onPress: (newMinStock) => {
-                                  const minStock = parseInt(newMinStock || '0');
-                                  if (!isNaN(minStock) && minStock >= 0) {
-                                    updateProductDetails(product.id, { minStock });
-                                  }
-                                }
-                              }
-                            ]
-                          );
+                          const newMinStock = prompt(`Edit Min Stock\nCurrent min stock: ${product.minStock}\nEnter new min stock:`, product.minStock.toString());
+                          if (newMinStock) {
+                            const minStock = parseInt(newMinStock);
+                            if (!isNaN(minStock) && minStock >= 0) {
+                              updateProductDetails(product.id, { minStock });
+                            } else {
+                              alert('Please enter a valid number');
+                            }
+                          }
                         }}
                       >
                         <Text style={styles.editButtonText}>⚠️ Update Min Stock</Text>
