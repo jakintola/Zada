@@ -342,6 +342,7 @@ export default function App() {
   const [showNotification, setShowNotification] = useState(false);
   const [notificationMessage, setNotificationMessage] = useState('');
   const [unreadMessages, setUnreadMessages] = useState(0);
+  const [seenMessageIds, setSeenMessageIds] = useState<Set<string>>(new Set());
   
   // Enhanced Customer State
   const [customerView, setCustomerView] = useState<'home' | 'products' | 'cart' | 'orders' | 'profile'>('home');
@@ -418,6 +419,7 @@ export default function App() {
     setShowChat(true);
     setIsChatLoading(true);
     clearUnreadMessages(); // Clear unread count when opening chat
+    setShowNotification(false); // Hide any visible notification
     
     // Check if Supabase is properly configured
     if (!process.env.EXPO_PUBLIC_SUPABASE_URL || process.env.EXPO_PUBLIC_SUPABASE_URL === 'https://placeholder.supabase.co') {
@@ -430,10 +432,12 @@ export default function App() {
         // Admin sees all support messages
         const supportMessages = messages.filter((msg: any) => msg.type === 'support');
         setChatMessages(supportMessages);
+        markMessagesAsSeen(supportMessages); // Mark all loaded messages as seen
       } else {
         // Customer sees all support messages (both their own and admin replies)
         const supportMessages = messages.filter((msg: any) => msg.type === 'support');
         setChatMessages(supportMessages);
+        markMessagesAsSeen(supportMessages); // Mark all loaded messages as seen
       }
       
       setIsChatLoading(false);
@@ -447,7 +451,10 @@ export default function App() {
         .select('*')
         .eq('type', 'support')
         .order('created_at', { ascending: true });
-      if (!error && data) setChatMessages(data as ChatMessage[]);
+      if (!error && data) {
+        setChatMessages(data as ChatMessage[]);
+        markMessagesAsSeen(data as ChatMessage[]); // Mark all loaded messages as seen
+      }
       
       // Subscribe to all support messages
       chatSubscriptionRef.current?.unsubscribe?.();
@@ -460,6 +467,7 @@ export default function App() {
           // Show notification for new messages (not from current user)
           if (msg.sender_role !== 'admin') {
             showMessageNotification(`New message from customer: ${msg.content.substring(0, 50)}...`);
+            markMessagesAsSeen([msg]); // Mark as seen to prevent re-notification
           }
         })
         .subscribe();
@@ -470,7 +478,10 @@ export default function App() {
         .select('*')
         .eq('type', 'support')
         .order('created_at', { ascending: true });
-      if (!error && data) setChatMessages(data as ChatMessage[]);
+      if (!error && data) {
+        setChatMessages(data as ChatMessage[]);
+        markMessagesAsSeen(data as ChatMessage[]); // Mark all loaded messages as seen
+      }
       
       // Subscribe to all support messages
       chatSubscriptionRef.current?.unsubscribe?.();
@@ -483,6 +494,7 @@ export default function App() {
           // Show notification for new messages (not from current user)
           if (msg.sender_role === 'admin') {
             showMessageNotification(`New reply from admin: ${msg.content.substring(0, 50)}...`);
+            markMessagesAsSeen([msg]); // Mark as seen to prevent re-notification
           }
         })
         .subscribe();
@@ -514,6 +526,21 @@ export default function App() {
     setUnreadMessages(0);
   };
 
+  const markMessagesAsSeen = async (messages: any[]) => {
+    const newSeenIds = new Set(seenMessageIds);
+    messages.forEach(msg => {
+      newSeenIds.add(msg.id);
+    });
+    setSeenMessageIds(newSeenIds);
+    
+    // Persist seen message IDs to storage
+    try {
+      await storage.setItem('@zada_seen_message_ids', JSON.stringify(Array.from(newSeenIds)));
+    } catch (error) {
+      console.error('Failed to save seen message IDs:', error);
+    }
+  };
+
   // Check for new messages in local storage (for fallback mode)
   const checkForNewMessages = async () => {
     if (!process.env.EXPO_PUBLIC_SUPABASE_URL || process.env.EXPO_PUBLIC_SUPABASE_URL === 'https://placeholder.supabase.co') {
@@ -525,22 +552,26 @@ export default function App() {
         const newCustomerMessages = messages.filter((msg: any) => 
           msg.type === 'support' && 
           msg.sender_role === 'customer' && 
-          !chatMessages.some(existing => existing.id === msg.id)
+          !seenMessageIds.has(msg.id)
         );
         
         if (newCustomerMessages.length > 0) {
           showMessageNotification(`New message from customer: ${newCustomerMessages[0].content.substring(0, 50)}...`);
+          // Mark these messages as seen to prevent re-notification
+          markMessagesAsSeen(newCustomerMessages);
         }
       } else {
         // Customer gets notified of new admin messages
         const newAdminMessages = messages.filter((msg: any) => 
           msg.type === 'support' && 
           msg.sender_role === 'admin' && 
-          !chatMessages.some(existing => existing.id === msg.id)
+          !seenMessageIds.has(msg.id)
         );
         
         if (newAdminMessages.length > 0) {
           showMessageNotification(`New reply from admin: ${newAdminMessages[0].content.substring(0, 50)}...`);
+          // Mark these messages as seen to prevent re-notification
+          markMessagesAsSeen(newAdminMessages);
         }
       }
     }
@@ -620,6 +651,20 @@ export default function App() {
     const interval = setInterval(checkForNewMessages, 5000);
     return () => clearInterval(interval);
   }, [chatMessages, user]);
+
+  // Load seen message IDs on app start
+  useEffect(() => {
+    (async () => {
+      try {
+        const storedSeenIds = await storage.getItem('@zada_seen_message_ids');
+        if (storedSeenIds) {
+          setSeenMessageIds(new Set(JSON.parse(storedSeenIds)));
+        }
+      } catch (error) {
+        console.error('Failed to load seen message IDs:', error);
+      }
+    })();
+  }, []);
 
   useEffect(() => {
     (async () => {
