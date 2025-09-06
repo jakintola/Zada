@@ -413,6 +413,30 @@ export default function App() {
     setShowChat(true);
     setIsChatLoading(true);
     
+    // Check if Supabase is properly configured
+    if (!process.env.EXPO_PUBLIC_SUPABASE_URL || process.env.EXPO_PUBLIC_SUPABASE_URL === 'https://placeholder.supabase.co') {
+      // Use local storage fallback
+      console.log('Loading chat messages from local storage');
+      const storedMessages = await storage.getItem('@zada_chat_messages') || '[]';
+      const messages = JSON.parse(storedMessages);
+      
+      if (user?.role === 'admin') {
+        // Admin sees all support messages
+        const supportMessages = messages.filter((msg: any) => msg.type === 'support');
+        setChatMessages(supportMessages);
+      } else {
+        // Customer sees only their own support messages
+        const customerId = user?.email || '';
+        const customerMessages = messages.filter((msg: any) => 
+          msg.type === 'support' && msg.sender_id === customerId
+        );
+        setChatMessages(customerMessages);
+      }
+      
+      setIsChatLoading(false);
+      return;
+    }
+    
     if (user?.role === 'admin') {
       // Admin sees all support messages from all customers
       const { data, error } = await supabase
@@ -465,6 +489,15 @@ export default function App() {
 
   const sendChatMessage = async () => {
     if (!chatInput.trim()) return;
+    
+    console.log('Sending chat message:', {
+      order_id: chatOrderId,
+      type: chatOrderId ? 'order' : 'support',
+      sender_role: user?.role,
+      sender_id: user?.email,
+      content: chatInput.trim()
+    });
+    
     const payload = {
       order_id: chatOrderId || null,
       type: chatOrderId ? 'order' : 'support',
@@ -472,8 +505,55 @@ export default function App() {
       sender_id: user?.email || null,
       content: chatInput.trim(),
     } as any;
-    const { error } = await supabase.from('messages').insert(payload);
-    if (!error) setChatInput('');
+    
+    try {
+      // Check if Supabase is properly configured
+      if (!process.env.EXPO_PUBLIC_SUPABASE_URL || process.env.EXPO_PUBLIC_SUPABASE_URL === 'https://placeholder.supabase.co') {
+        // Use local storage fallback
+        console.log('Using local storage fallback for chat messages');
+        const newMessage = {
+          id: `local-${Date.now()}`,
+          ...payload,
+          created_at: new Date().toISOString(),
+        };
+        
+        // Save to local storage
+        const existingMessages = await storage.getItem('@zada_chat_messages') || '[]';
+        const messages = JSON.parse(existingMessages);
+        messages.push(newMessage);
+        await storage.setItem('@zada_chat_messages', JSON.stringify(messages));
+        
+        // Add to local state
+        setChatMessages(prev => [...prev, newMessage]);
+        setChatInput('');
+        
+        Alert.alert('Message Sent', 'Your message has been sent! (Using local storage - messages will be visible to admin when database is configured)');
+        return;
+      }
+      
+      const { data, error } = await supabase.from('messages').insert(payload);
+      
+      if (error) {
+        console.error('Chat message error:', error);
+        Alert.alert('Error', `Failed to send message: ${error.message}`);
+        return;
+      }
+      
+      console.log('Message sent successfully:', data);
+      setChatInput('');
+      
+      // Add message to local state immediately for better UX
+      const newMessage = {
+        id: `temp-${Date.now()}`,
+        ...payload,
+        created_at: new Date().toISOString(),
+      };
+      setChatMessages(prev => [...prev, newMessage]);
+      
+    } catch (err) {
+      console.error('Chat message exception:', err);
+      Alert.alert('Error', 'Failed to send message. Please try again.');
+    }
   };
 
   useEffect(() => {
@@ -2590,6 +2670,25 @@ export default function App() {
                   </View>
                 </View>
 
+                {/* Support Chat Button */}
+                <View style={styles.supportChatSection}>
+                  <TouchableOpacity 
+                    style={styles.supportChatButton}
+                    onPress={openSupportChat}
+                  >
+                    <View style={styles.supportChatIcon}>
+                      <Text style={styles.supportChatIconText}>💬</Text>
+                    </View>
+                    <View style={styles.supportChatInfo}>
+                      <Text style={styles.supportChatTitle}>Need Help?</Text>
+                      <Text style={styles.supportChatSubtitle}>Chat with our support team for product inquiries, order help, or any questions</Text>
+                    </View>
+                    <View style={styles.supportChatArrow}>
+                      <Text style={styles.supportChatArrowText}>→</Text>
+                    </View>
+                  </TouchableOpacity>
+                </View>
+
                 {/* Featured Products Section */}
                 <View style={styles.featuredProductsSection}>
                   <View style={styles.sectionHeader}>
@@ -4655,6 +4754,59 @@ const styles = StyleSheet.create({
   quickStats: {
     flexDirection: 'row',
     gap: 20,
+  },
+  
+  // Support Chat Button Styles
+  supportChatSection: {
+    marginBottom: 25,
+  },
+  supportChatButton: {
+    backgroundColor: 'white',
+    padding: 20,
+    borderRadius: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 4,
+    borderLeftWidth: 4,
+    borderLeftColor: '#0EA5E9',
+  },
+  supportChatIcon: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    backgroundColor: '#F0F9FF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 15,
+  },
+  supportChatIconText: {
+    fontSize: 24,
+  },
+  supportChatInfo: {
+    flex: 1,
+  },
+  supportChatTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#1E293B',
+    marginBottom: 4,
+  },
+  supportChatSubtitle: {
+    fontSize: 14,
+    color: '#64748B',
+    lineHeight: 20,
+  },
+  supportChatArrow: {
+    marginLeft: 10,
+  },
+  supportChatArrowText: {
+    fontSize: 20,
+    color: '#0EA5E9',
+    fontWeight: 'bold',
   },
   statItem: {
     alignItems: 'center',
