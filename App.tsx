@@ -364,6 +364,11 @@ export default function App() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [user, setUser] = useState<any>(null);
+  const [isRegistering, setIsRegistering] = useState(false);
+  const [registerName, setRegisterName] = useState('');
+  const [registerEmail, setRegisterEmail] = useState('');
+  const [registerPassword, setRegisterPassword] = useState('');
+  const [registerRole, setRegisterRole] = useState<'customer' | 'admin'>('customer');
   const [currentView, setCurrentView] = useState<'dashboard' | 'inventory' | 'orders' | 'delivery' | 'analytics' | 'notifications' | 'supportInbox'>('dashboard');
   const [showOrderModal, setShowOrderModal] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<any>(null);
@@ -470,11 +475,13 @@ export default function App() {
       if (user?.role === 'admin') {
         // Admin sees all support messages
         const supportMessages = messages.filter((msg: any) => msg.type === 'support');
+        console.log('Admin loading chat messages:', supportMessages.length, 'messages');
         setChatMessages(supportMessages);
         markMessagesAsSeen(supportMessages); // Mark all loaded messages as seen
       } else {
         // Customer sees all support messages (both their own and admin replies)
         const supportMessages = messages.filter((msg: any) => msg.type === 'support');
+        console.log('Customer loading chat messages:', supportMessages.length, 'messages');
         setChatMessages(supportMessages);
         markMessagesAsSeen(supportMessages); // Mark all loaded messages as seen
       }
@@ -787,31 +794,39 @@ export default function App() {
       Alert.alert('Missing info', 'Please enter name, email and password');
       return;
     }
+
     const emailTaken = users.some(u => u.email.toLowerCase() === regEmail.toLowerCase());
     if (emailTaken) {
       Alert.alert('Email in use', 'An account with this email already exists');
       return;
     }
+
     const newUser: AppUser = {
-      id: Date.now().toString(),
+      id: `user-${Date.now()}`,
       name: regName.trim(),
       email: regEmail.trim().toLowerCase(),
       password: regPassword,
-      role: 'customer',
+      role: registerRole, // Use selected role
       phone: regPhone.trim(),
       address: regAddress.trim(),
     };
-    const updated = [...users, newUser];
-    setUsers(updated);
-    await saveUsersToStorage(updated);
+
+    const updatedUsers = [...users, newUser];
+    setUsers(updatedUsers);
+    await saveUsersToStorage(updatedUsers);
     setUser(newUser);
     await saveCurrentUser(newUser);
     setProfileName(newUser.name);
     setProfileEmail(newUser.email);
-    setProfilePhone(newUser.phone || '');
-    setProfileAddress(newUser.address || '');
+    setProfilePhone(newUser.phone);
+    setProfileAddress(newUser.address);
     setIsRegisterMode(false);
-    setRegName(''); setRegEmail(''); setRegPassword(''); setRegPhone(''); setRegAddress('');
+    setRegName('');
+    setRegEmail('');
+    setRegPassword('');
+    setRegPhone('');
+    setRegAddress('');
+    Alert.alert('Success', `Account created successfully! Welcome, ${newUser.name}!`);
   };
 
   const handleLogout = () => {
@@ -1658,6 +1673,30 @@ export default function App() {
               <TextInput style={styles.input} placeholder="Full Name" value={regName} onChangeText={setRegName} />
               <TextInput style={styles.input} placeholder="Email" value={regEmail} onChangeText={setRegEmail} keyboardType="email-address" />
               <TextInput style={styles.input} placeholder="Password" value={regPassword} onChangeText={setRegPassword} secureTextEntry />
+              
+              {/* Role Selection */}
+              <View style={styles.roleSelector}>
+                <Text style={styles.roleLabel}>Account Type:</Text>
+                <View style={styles.roleButtons}>
+                  <TouchableOpacity 
+                    style={[styles.roleButton, registerRole === 'customer' && styles.activeRoleButton]}
+                    onPress={() => setRegisterRole('customer')}
+                  >
+                    <Text style={[styles.roleButtonText, registerRole === 'customer' && styles.activeRoleButtonText]}>
+                      Customer
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity 
+                    style={[styles.roleButton, registerRole === 'admin' && styles.activeRoleButton]}
+                    onPress={() => setRegisterRole('admin')}
+                  >
+                    <Text style={[styles.roleButtonText, registerRole === 'admin' && styles.activeRoleButtonText]}>
+                      Admin
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+              
               <TextInput style={styles.input} placeholder="Phone (optional)" value={regPhone} onChangeText={setRegPhone} keyboardType="phone-pad" />
               <TextInput style={styles.input} placeholder="Address (optional)" value={regAddress} onChangeText={setRegAddress} />
               <TouchableOpacity style={styles.loginButton} onPress={handleRegister}>
@@ -3896,6 +3935,41 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#94A3B8',
     marginBottom: 5,
+  },
+  roleSelector: {
+    marginVertical: 10,
+  },
+  roleLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#374151',
+    marginBottom: 8,
+  },
+  roleButtons: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  roleButton: {
+    flex: 1,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    backgroundColor: '#F9FAFB',
+    alignItems: 'center',
+  },
+  activeRoleButton: {
+    backgroundColor: '#0EA5E9',
+    borderColor: '#0EA5E9',
+  },
+  roleButtonText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#6B7280',
+  },
+  activeRoleButtonText: {
+    color: 'white',
   },
   header: {
     backgroundColor: '#0EA5E9',
