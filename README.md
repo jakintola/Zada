@@ -15,19 +15,42 @@ A comprehensive water delivery management system with real-time features, built 
 
 ```
 Zada1.0/
-├── App.tsx                 # Main application component
-├── index.ts               # Entry point
-├── storageUtils.ts        # Cross-platform storage utilities
-├── supabaseClient.ts      # Supabase configuration
-├── package.json           # Dependencies and scripts
-├── tsconfig.json          # TypeScript configuration
-├── app.json              # Expo configuration
-├── assets/               # App icons and images
-├── supabase/             # Database setup files
-│   ├── fixed_setup.sql   # Complete database setup
-│   └── step_by_step_setup.sql # Step-by-step setup
-└── README.md             # This file
+├── 📱 Core App Files
+│   ├── App.tsx                 # Main application component (refactored)
+│   ├── index.ts               # Entry point
+│   ├── storageUtils.ts        # Cross-platform storage utilities
+│   ├── supabaseClient.ts      # Supabase configuration
+│   ├── package.json           # Dependencies and scripts
+│   ├── tsconfig.json          # TypeScript configuration
+│   └── app.json              # Expo configuration
+│
+├── 🏗️ Source Code (src/)
+│   ├── components/common/     # Reusable UI components
+│   ├── contexts/             # React Context providers
+│   ├── hooks/               # Custom React hooks
+│   ├── screens/             # Main application screens
+│   ├── services/            # External service integrations
+│   ├── types/               # TypeScript type definitions
+│   ├── utils/               # Utility functions
+│   └── constants/           # Application constants
+│
+├── 🗄️ Database
+│   └── supabase/             # Database setup files
+│       ├── fixed_setup.sql   # Complete database setup
+│       └── step_by_step_setup.sql # Step-by-step setup
+│
+├── 🎨 Assets
+│   └── assets/               # App icons and images
+│
+└── 📚 Documentation
+    ├── README.md             # This file
+    ├── ARCHITECTURE.md       # Detailed architecture docs
+    ├── MIGRATION_GUIDE.md    # Migration from old structure
+    ├── BEST_PRACTICES_SUMMARY.md # Implementation summary
+    └── PROJECT_STRUCTURE.md  # Clean project structure
 ```
+
+> **Note**: This project has been refactored to follow React Native and TypeScript best practices with a clean, modular architecture. See `ARCHITECTURE.md` for detailed documentation.
 
 ## 🛠️ Setup Instructions
 
