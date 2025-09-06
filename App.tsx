@@ -146,6 +146,30 @@ const saveUserAdminData = async (userId: string, products: Product[], orders: Ad
   }
 };
 
+// Load products for all users (customers and admin)
+const loadProducts = async () => {
+  try {
+    const storedProducts = await storage.getItem('@zada_products');
+    if (storedProducts) {
+      return JSON.parse(storedProducts);
+    }
+    // If no stored products, return mock products
+    return [...mockProducts];
+  } catch (error) {
+    console.error('Failed to load products:', error);
+    return [...mockProducts];
+  }
+};
+
+// Save products globally
+const saveProducts = async (products: Product[]) => {
+  try {
+    await storage.setItem('@zada_products', JSON.stringify(products));
+  } catch (error) {
+    console.error('Failed to save products:', error);
+  }
+};
+
 const loadUsersFromStorage = async (): Promise<AppUser[]> => {
   try {
     const raw = await storage.getItem(STORAGE_KEYS.users);
@@ -422,6 +446,9 @@ export default function App() {
   
   // Admin state for orders
   const [adminOrders, setAdminOrders] = useState<AdminOrder[]>([]);
+  
+  // Products state for customers (shared with admin)
+  const [products, setProducts] = useState<Product[]>([]);
   // Admin state for delivery routes (sync with orders)
   const [adminDeliveryRoutes, setAdminDeliveryRoutes] = useState<DeliveryRoute[]>([]);
   // Chat state
@@ -713,6 +740,23 @@ export default function App() {
         } catch (error) {
           console.error('Failed to load seen message IDs:', error);
         }
+      }
+    })();
+  }, [user?.id]);
+
+  // Load products for all users
+  useEffect(() => {
+    (async () => {
+      try {
+        const loadedProducts = await loadProducts();
+        setProducts(loadedProducts);
+        
+        // Also set admin products if user is admin
+        if (user?.role === 'admin') {
+          setAdminProducts(loadedProducts);
+        }
+      } catch (error) {
+        console.error('Failed to load products:', error);
       }
     })();
   }, [user?.id]);
@@ -1128,7 +1172,7 @@ export default function App() {
     setShowProductDetails(true);
   };
 
-  const filteredProducts = adminProducts.filter(product => {
+  const filteredProducts = products.filter(product => {
     const matchesCategory = selectedCategory === 'all' || product.category === selectedCategory;
     const matchesSearch = product.name.toLowerCase().includes(searchQuery.toLowerCase());
     return matchesCategory && matchesSearch;
@@ -1253,32 +1297,49 @@ export default function App() {
   };
 
   // Inventory Management Functions
-  const updateProductDetails = (productId: string, updates: Partial<Product>) => {
-    const updatedProducts = adminProducts.map(product => 
+  const updateProductDetails = async (productId: string, updates: Partial<Product>) => {
+    const updatedProducts = products.map(product => 
       product.id === productId ? { ...product, ...updates } : product
     );
     
-    // Update the state to reflect changes in the UI
+    // Update both products and adminProducts
+    setProducts(updatedProducts);
     setAdminProducts(updatedProducts);
     
-    // In a real app, this would update the database
+    // Save to storage
+    await saveProducts(updatedProducts);
+    
+    // Save to user-specific admin data
+    if (user?.id) {
+      await saveUserAdminData(user.id, updatedProducts, adminOrders);
+    }
+    
     Alert.alert('Success', 'Product details updated successfully');
   };
 
-  const addNewProduct = (product: Omit<Product, 'id'>) => {
+  const addNewProduct = async (product: Omit<Product, 'id'>) => {
     const newProduct: Product = {
       ...product,
-      id: (adminProducts.length + 1).toString()
+      id: (products.length + 1).toString()
     };
     
-    // Add to state to reflect changes in the UI
-    setAdminProducts([...adminProducts, newProduct]);
+    // Update both products and adminProducts
+    const updatedProducts = [...products, newProduct];
+    setProducts(updatedProducts);
+    setAdminProducts(updatedProducts);
     
-    // In a real app, this would be an API call
+    // Save to storage
+    await saveProducts(updatedProducts);
+    
+    // Save to user-specific admin data
+    if (user?.id) {
+      await saveUserAdminData(user.id, updatedProducts, adminOrders);
+    }
+    
     Alert.alert('Success', 'New product added successfully');
   };
 
-  const deleteProduct = (productId: string) => {
+  const deleteProduct = async (productId: string) => {
     Alert.alert(
       'Confirm Delete',
       'Are you sure you want to delete this product?',
@@ -1287,12 +1348,20 @@ export default function App() {
         { 
           text: 'Delete', 
           style: 'destructive',
-          onPress: () => {
-            // Remove from state to reflect changes in the UI
-            const updatedProducts = adminProducts.filter(product => product.id !== productId);
+          onPress: async () => {
+            // Remove from both products and adminProducts
+            const updatedProducts = products.filter(product => product.id !== productId);
+            setProducts(updatedProducts);
             setAdminProducts(updatedProducts);
             
-            // In a real app, this would be an API call
+            // Save to storage
+            await saveProducts(updatedProducts);
+            
+            // Save to user-specific admin data
+            if (user?.id) {
+              await saveUserAdminData(user.id, updatedProducts, adminOrders);
+            }
+            
             Alert.alert('Success', 'Product deleted successfully');
           }
         }
@@ -2956,7 +3025,7 @@ export default function App() {
                   </View>
                   
                   <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.featuredProductsScroll}>
-                    {adminProducts.slice(0, 4).map(product => (
+                    {products.slice(0, 4).map(product => (
                       <View key={product.id} style={styles.featuredProductCard}>
                         <View style={[styles.featuredProductImage, { backgroundColor: getProductImageColor(product.category) }]}>
                           <Text style={styles.featuredProductIcon}>{product.image}</Text>
@@ -2994,7 +3063,7 @@ export default function App() {
                     </View>
                     <TouchableOpacity 
                       style={styles.quickOrderButton}
-                      onPress={() => addToCart(adminProducts[0])}
+                      onPress={() => addToCart(products[0])}
                     >
                       <Text style={styles.quickOrderButtonText}>Add to Cart</Text>
                     </TouchableOpacity>
