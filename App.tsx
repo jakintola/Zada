@@ -108,6 +108,44 @@ const STORAGE_KEYS = {
   currentUser: '@zada_current_user',
 };
 
+// Generate user-specific storage keys
+const getUserStorageKey = (userId: string, key: string) => `@zada_user_${userId}_${key}`;
+
+// Load user-specific admin data
+const loadUserAdminData = async (userId: string) => {
+  try {
+    const productsKey = getUserStorageKey(userId, 'admin_products');
+    const ordersKey = getUserStorageKey(userId, 'admin_orders');
+    
+    const storedProducts = await storage.getItem(productsKey);
+    const storedOrders = await storage.getItem(ordersKey);
+    
+    return {
+      products: storedProducts ? JSON.parse(storedProducts) : [...mockProducts],
+      orders: storedOrders ? JSON.parse(storedOrders) : [...mockOrders]
+    };
+  } catch (error) {
+    console.error('Failed to load user admin data:', error);
+    return {
+      products: [...mockProducts],
+      orders: [...mockOrders]
+    };
+  }
+};
+
+// Save user-specific admin data
+const saveUserAdminData = async (userId: string, products: Product[], orders: AdminOrder[]) => {
+  try {
+    const productsKey = getUserStorageKey(userId, 'admin_products');
+    const ordersKey = getUserStorageKey(userId, 'admin_orders');
+    
+    await storage.setItem(productsKey, JSON.stringify(products));
+    await storage.setItem(ordersKey, JSON.stringify(orders));
+  } catch (error) {
+    console.error('Failed to save user admin data:', error);
+  }
+};
+
 const loadUsersFromStorage = async (): Promise<AppUser[]> => {
   try {
     const raw = await storage.getItem(STORAGE_KEYS.users);
@@ -375,10 +413,10 @@ export default function App() {
   const [productQtyDraft, setProductQtyDraft] = useState<Record<string, number>>({});
   
   // Admin state for products
-  const [adminProducts, setAdminProducts] = useState<Product[]>(mockProducts);
+  const [adminProducts, setAdminProducts] = useState<Product[]>([]);
   
   // Admin state for orders
-  const [adminOrders, setAdminOrders] = useState<AdminOrder[]>(mockOrders);
+  const [adminOrders, setAdminOrders] = useState<AdminOrder[]>([]);
   // Admin state for delivery routes (sync with orders)
   const [adminDeliveryRoutes, setAdminDeliveryRoutes] = useState<DeliveryRoute[]>([]);
   // Chat state
@@ -425,7 +463,8 @@ export default function App() {
     if (!process.env.EXPO_PUBLIC_SUPABASE_URL || process.env.EXPO_PUBLIC_SUPABASE_URL === 'https://placeholder.supabase.co') {
       // Use local storage fallback
       console.log('Loading chat messages from local storage');
-      const storedMessages = await storage.getItem('@zada_chat_messages') || '[]';
+      // Support messages are global (shared between admin and customers)
+      const storedMessages = await storage.getItem('@zada_support_messages') || '[]';
       const messages = JSON.parse(storedMessages);
       
       if (user?.role === 'admin') {
@@ -535,7 +574,8 @@ export default function App() {
     
     // Persist seen message IDs to storage
     try {
-      await storage.setItem('@zada_seen_message_ids', JSON.stringify(Array.from(newSeenIds)));
+      const userSeenKey = getUserStorageKey(user?.id || 'anonymous', 'seen_message_ids');
+      await storage.setItem(userSeenKey, JSON.stringify(Array.from(newSeenIds)));
     } catch (error) {
       console.error('Failed to save seen message IDs:', error);
     }
@@ -544,7 +584,8 @@ export default function App() {
   // Check for new messages in local storage (for fallback mode)
   const checkForNewMessages = async () => {
     if (!process.env.EXPO_PUBLIC_SUPABASE_URL || process.env.EXPO_PUBLIC_SUPABASE_URL === 'https://placeholder.supabase.co') {
-      const storedMessages = await storage.getItem('@zada_chat_messages') || '[]';
+      // Support messages are global (shared between admin and customers)
+      const storedMessages = await storage.getItem('@zada_support_messages') || '[]';
       const messages = JSON.parse(storedMessages);
       
       if (user?.role === 'admin') {
@@ -607,11 +648,11 @@ export default function App() {
           created_at: new Date().toISOString(),
         };
         
-        // Save to local storage
-        const existingMessages = await storage.getItem('@zada_chat_messages') || '[]';
+        // Save to local storage (support messages are global)
+        const existingMessages = await storage.getItem('@zada_support_messages') || '[]';
         const messages = JSON.parse(existingMessages);
         messages.push(newMessage);
-        await storage.setItem('@zada_chat_messages', JSON.stringify(messages));
+        await storage.setItem('@zada_support_messages', JSON.stringify(messages));
         
         // Add to local state
         setChatMessages(prev => [...prev, newMessage]);
@@ -655,16 +696,34 @@ export default function App() {
   // Load seen message IDs on app start
   useEffect(() => {
     (async () => {
-      try {
-        const storedSeenIds = await storage.getItem('@zada_seen_message_ids');
-        if (storedSeenIds) {
-          setSeenMessageIds(new Set(JSON.parse(storedSeenIds)));
+      if (user?.id) {
+        try {
+          const userSeenKey = getUserStorageKey(user.id, 'seen_message_ids');
+          const storedSeenIds = await storage.getItem(userSeenKey);
+          if (storedSeenIds) {
+            setSeenMessageIds(new Set(JSON.parse(storedSeenIds)));
+          }
+        } catch (error) {
+          console.error('Failed to load seen message IDs:', error);
         }
-      } catch (error) {
-        console.error('Failed to load seen message IDs:', error);
       }
     })();
-  }, []);
+  }, [user?.id]);
+
+  // Load user-specific admin data when user logs in
+  useEffect(() => {
+    (async () => {
+      if (user?.id && user?.role === 'admin') {
+        try {
+          const userData = await loadUserAdminData(user.id);
+          setAdminProducts(userData.products);
+          setAdminOrders(userData.orders);
+        } catch (error) {
+          console.error('Failed to load user admin data:', error);
+        }
+      }
+    })();
+  }, [user?.id, user?.role]);
 
   useEffect(() => {
     (async () => {
@@ -778,7 +837,7 @@ export default function App() {
     setShowCustomerOrderModal(true);
   };
 
-  const submitCustomerOrder = () => {
+  const submitCustomerOrder = async () => {
     if (!orderQuantity || parseInt(orderQuantity) <= 0) {
       Alert.alert('Error', 'Please enter a valid quantity');
       return;
@@ -804,13 +863,23 @@ export default function App() {
       // Update customer orders
       setCustomerOrders([...customerOrders, newOrder]);
       
-      // Update admin orders (mockOrders)
-      // In a real app, this would be an API call
-      mockOrders.push(syncResult.adminOrder);
+      // Update admin orders
+      const updatedAdminOrders = [...adminOrders, syncResult.adminOrder];
+      setAdminOrders(updatedAdminOrders);
+      
+      // Save to user-specific storage
+      if (user?.id) {
+        await saveUserAdminData(user.id, adminProducts, updatedAdminOrders);
+      }
       
       // Update inventory
-      const updatedProducts = updateInventoryFromOrder(newOrder);
-      // In a real app, this would update the global state
+      const updatedProducts = updateInventoryFromOrder(newOrder, adminProducts);
+      setAdminProducts(updatedProducts);
+      
+      // Save updated products to user-specific storage
+      if (user?.id) {
+        await saveUserAdminData(user.id, updatedProducts, updatedAdminOrders);
+      }
       
       setShowCustomerOrderModal(false);
       setOrderQuantity('1');
@@ -1279,10 +1348,10 @@ export default function App() {
     }
   };
 
-  const updateInventoryFromOrder = (order: CustomerOrder): Product[] => {
+  const updateInventoryFromOrder = (order: CustomerOrder, products: Product[]): Product[] => {
     try {
       // Update product stock levels
-      const updatedProducts = mockProducts.map(product => {
+      const updatedProducts = products.map(product => {
         const orderItem = order.items ? 
           order.items.find((item: OrderItem) => item.product.id === product.id) :
           (order.product && order.product.id === product.id ? { quantity: order.quantity || 1 } : null);
@@ -1299,7 +1368,7 @@ export default function App() {
       return updatedProducts;
     } catch (error) {
       console.error('Update inventory error:', error);
-      return mockProducts;
+      return products;
     }
   };
 
@@ -1308,7 +1377,7 @@ export default function App() {
     try {
       // Find orders that exist in both admin and customer systems
       const updatedCustomerOrders = customerOrders.map(customerOrder => {
-        const adminOrder = mockOrders.find(adminOrder => adminOrder.id === customerOrder.id);
+        const adminOrder = adminOrders.find(adminOrder => adminOrder.id === customerOrder.id);
         if (adminOrder) {
           return {
             ...customerOrder,
@@ -1433,7 +1502,7 @@ export default function App() {
 
 
   const optimizeDeliveryRoute = (zone: string) => {
-    const zoneOrders = mockOrders.filter(o => o.deliveryZone === zone && o.status === 'confirmed');
+    const zoneOrders = adminOrders.filter(o => o.deliveryZone === zone && o.status === 'confirmed');
     if (zoneOrders.length > 0) {
       Alert.alert('Route Optimized', `Optimized route for ${zone} with ${zoneOrders.length} orders. Estimated time: ${zoneOrders.length * 0.5} hours`);
     } else {
@@ -1561,7 +1630,7 @@ export default function App() {
   };
 
   const autoClusterOrders = () => {
-    const clusters = clusterOrdersByProximity(mockOrders, 2.0); // 2km radius
+    const clusters = clusterOrdersByProximity(adminOrders, 2.0); // 2km radius
     const optimizedRoutes = generateOptimizedRoutes(clusters);
     
     // Update delivery routes state
@@ -2481,7 +2550,7 @@ export default function App() {
                       Automatically group nearby orders for efficient batch delivery
                     </Text>
                     <Text style={styles.clusteringStats}>
-                      Current orders: {mockOrders.filter(o => o.status === 'confirmed').length} | 
+                      Current orders: {adminOrders.filter(o => o.status === 'confirmed').length} | 
                       Max cluster distance: 2km | 
                       Vehicle capacity: 50L
                     </Text>
@@ -2848,7 +2917,7 @@ export default function App() {
                   </View>
                   
                   <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.featuredProductsScroll}>
-                    {mockProducts.slice(0, 4).map(product => (
+                    {adminProducts.slice(0, 4).map(product => (
                       <View key={product.id} style={styles.featuredProductCard}>
                         <View style={[styles.featuredProductImage, { backgroundColor: getProductImageColor(product.category) }]}>
                           <Text style={styles.featuredProductIcon}>{product.image}</Text>
@@ -2886,7 +2955,7 @@ export default function App() {
                     </View>
                     <TouchableOpacity 
                       style={styles.quickOrderButton}
-                      onPress={() => addToCart(mockProducts[0])}
+                      onPress={() => addToCart(adminProducts[0])}
                     >
                       <Text style={styles.quickOrderButtonText}>Add to Cart</Text>
                     </TouchableOpacity>
