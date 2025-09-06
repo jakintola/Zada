@@ -1608,25 +1608,46 @@ export default function App() {
 
       {/* Notification Banner */}
       {showNotification && (
-        <View style={styles.notificationBanner}>
+        <TouchableOpacity 
+          style={styles.notificationBanner}
+          onPress={() => {
+            setShowNotification(false);
+            clearUnreadMessages();
+            openSupportChat();
+          }}
+          activeOpacity={0.8}
+        >
           <View style={styles.notificationContent}>
             <Text style={styles.notificationIcon}>🔔</Text>
-            <Text style={styles.notificationText}>{notificationMessage}</Text>
+            <Text style={styles.notificationText}>
+              {notificationMessage}
+              <Text style={styles.notificationTapHint}> • Tap to open</Text>
+            </Text>
             <TouchableOpacity 
               style={styles.notificationClose}
-              onPress={() => setShowNotification(false)}
+              onPress={(e) => {
+                e.stopPropagation();
+                setShowNotification(false);
+              }}
             >
               <Text style={styles.notificationCloseText}>✕</Text>
             </TouchableOpacity>
           </View>
-        </View>
+        </TouchableOpacity>
       )}
 
       {/* Unread Messages Badge */}
       {unreadMessages > 0 && (
-        <View style={styles.unreadBadge}>
+        <TouchableOpacity 
+          style={styles.unreadBadge}
+          onPress={() => {
+            clearUnreadMessages();
+            openSupportChat();
+          }}
+          activeOpacity={0.8}
+        >
           <Text style={styles.unreadBadgeText}>{unreadMessages}</Text>
-        </View>
+        </TouchableOpacity>
       )}
 
               {user.role === 'admin' && (
@@ -6634,6 +6655,8 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 3,
+    borderWidth: 1,
+    borderColor: '#0284C7',
   },
   notificationContent: {
     flexDirection: 'row',
@@ -6649,6 +6672,12 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '500',
     lineHeight: 20,
+  },
+  notificationTapHint: {
+    fontSize: 12,
+    fontWeight: '400',
+    opacity: 0.8,
+    fontStyle: 'italic',
   },
   notificationClose: {
     marginLeft: 12,
