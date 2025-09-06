@@ -412,23 +412,48 @@ export default function App() {
     setChatOrderId(null);
     setShowChat(true);
     setIsChatLoading(true);
-    const customerId = user?.email || '';
-    const { data, error } = await supabase
-      .from('messages')
-      .select('*')
-      .eq('type', 'support')
-      .eq('sender_id', customerId)
-      .order('created_at', { ascending: true });
-    if (!error && data) setChatMessages(data as ChatMessage[]);
+    
+    if (user?.role === 'admin') {
+      // Admin sees all support messages from all customers
+      const { data, error } = await supabase
+        .from('messages')
+        .select('*')
+        .eq('type', 'support')
+        .order('created_at', { ascending: true });
+      if (!error && data) setChatMessages(data as ChatMessage[]);
+      
+      // Subscribe to all support messages
+      chatSubscriptionRef.current?.unsubscribe?.();
+      chatSubscriptionRef.current = supabase
+        .channel('admin-support-ch')
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: 'type=eq.support' }, (payload: any) => {
+          const msg = payload.new as ChatMessage;
+          setChatMessages(prev => [...prev, msg]);
+        })
+        .subscribe();
+    } else {
+      // Customer sees only their own support messages
+      const customerId = user?.email || '';
+      const { data, error } = await supabase
+        .from('messages')
+        .select('*')
+        .eq('type', 'support')
+        .eq('sender_id', customerId)
+        .order('created_at', { ascending: true });
+      if (!error && data) setChatMessages(data as ChatMessage[]);
+      
+      // Subscribe to customer's own support messages
+      chatSubscriptionRef.current?.unsubscribe?.();
+      chatSubscriptionRef.current = supabase
+        .channel('customer-support-ch')
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `sender_id=eq.${customerId}` }, (payload: any) => {
+          const msg = payload.new as ChatMessage;
+          if (msg.type === 'support') setChatMessages(prev => [...prev, msg]);
+        })
+        .subscribe();
+    }
+    
     setIsChatLoading(false);
-    chatSubscriptionRef.current?.unsubscribe?.();
-    chatSubscriptionRef.current = supabase
-      .channel('support-ch')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `sender_id=eq.${customerId}` }, (payload: any) => {
-        const msg = payload.new as ChatMessage;
-        if (msg.type === 'support') setChatMessages(prev => [...prev, msg]);
-      })
-      .subscribe();
   };
 
   const closeChat = () => {
@@ -2906,11 +2931,10 @@ export default function App() {
                           </TouchableOpacity>
                           <TouchableOpacity
                             style={styles.modernDetailsButton}
-                            onPress={() => Alert.alert(
-                              `Order #${customerOrders.length - index} Details`,
-                              `Status: ${order.status}\nItems: ${order.items?.length || 1}\nQuantity: ${order.items ? order.items.reduce((sum: number, item: OrderItem) => sum + item.quantity, 0) : order.quantity}\nTotal: ₦${order.total.toLocaleString()}\nPayment: ${order.paymentMethod || 'Cash on Delivery'}\nDelivery: ${order.deliveryAddress}\nPhone: ${order.deliveryPhone}`,
-                              [{ text: 'OK' }]
-                            )}
+                            onPress={() => {
+                              setCustomerOrderDetails(order);
+                              setShowCustomerOrderModal(true);
+                            }}
                           >
                             <Text style={styles.modernDetailsButtonText}>📋 Details</Text>
                           </TouchableOpacity>
@@ -2920,12 +2944,13 @@ export default function App() {
                               if (order.items) {
                                 // Add items back to cart
                                 order.items.forEach((item: OrderItem) => {
-                                  const product = adminProducts.find(p => p.id === item.productId);
+                                  const product = adminProducts.find(p => p.id === item.product.id);
                                   if (product) {
                                     addToCart(product, item.quantity);
                                   }
                                 });
                                 Alert.alert('Added to Cart', `${order.items.length} items added to your cart`);
+                                setCustomerView('cart'); // Navigate to cart
                               }
                             }}
                           >
@@ -3030,10 +3055,10 @@ export default function App() {
 
       {/* Customer Order Modal */}
       <Modal
-        visible={false}
+        visible={showCustomerOrderModal}
         animationType="slide"
         transparent={true}
-        onRequestClose={() => {}}
+        onRequestClose={() => setShowCustomerOrderModal(false)}
       >
         <TouchableWithoutFeedback onPress={() => {
           Keyboard.dismiss();
@@ -3041,74 +3066,119 @@ export default function App() {
           <View style={styles.modalOverlay}>
             <TouchableWithoutFeedback onPress={() => {}}>
               <View style={styles.modalContent}>
-                <Text style={styles.modalTitle}>Place Order</Text>
-                <Text style={styles.modalProductName}>{selectedProduct?.name}</Text>
-                <Text style={styles.modalProductPrice}>₦{selectedProduct?.price?.toLocaleString()}</Text>
+                <Text style={styles.modalTitle}>Order Details</Text>
                 
-                <Text style={styles.modalLabel}>Quantity:</Text>
-                <TextInput
-                  style={styles.modalInput}
-                  value={orderQuantity}
-                  onChangeText={setOrderQuantity}
-                  keyboardType="numeric"
-                  placeholder="1"
-                  returnKeyType="done"
-                  blurOnSubmit={true}
-                />
-                
-                <Text style={styles.modalLabel}>Notes (Optional):</Text>
-                <TextInput
-                  style={styles.modalInput}
-                  value={orderNotes}
-                  onChangeText={setOrderNotes}
-                  placeholder="Special delivery instructions..."
-                  multiline
-                  returnKeyType="done"
-                  blurOnSubmit={true}
-                />
-                
-                <Text style={styles.modalLabel}>Payment Method:</Text>
-                <View style={styles.paymentOptions}>
-                  {(['cash', 'card', 'transfer'] as const).map(method => (
-                    <TouchableOpacity
-                      key={method}
-                      style={[
-                        styles.paymentOption,
-                        selectedPaymentMethod === method && styles.selectedPaymentOption
-                      ]}
-                      onPress={() => setSelectedPaymentMethod(method)}
-                    >
-                      <Text style={[
-                        styles.paymentOptionText,
-                        selectedPaymentMethod === method && styles.selectedPaymentOptionText
-                      ]}>
-                        {method.charAt(0).toUpperCase() + method.slice(1)}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
+                {customerOrderDetails && (
+                  <ScrollView style={styles.orderDetailsScroll}>
+                    {/* Order Header */}
+                    <View style={styles.orderDetailsHeader}>
+                      <Text style={styles.orderDetailsNumber}>Order #{customerOrders.findIndex(o => o.id === customerOrderDetails.id) + 1}</Text>
+                      <View style={[styles.orderDetailsStatus, { backgroundColor: getOrderStatusColor(customerOrderDetails.status) }]}>
+                        <Text style={styles.orderDetailsStatusText}>
+                          {customerOrderDetails.status === 'out_for_delivery' ? 'Delivering' : customerOrderDetails.status.replace('_', ' ').toUpperCase()}
+                        </Text>
+                      </View>
+                    </View>
+                    
+                    {/* Order Date */}
+                    <Text style={styles.orderDetailsDate}>
+                      {new Date(customerOrderDetails.orderDate).toLocaleDateString('en-US', { 
+                        weekday: 'long',
+                        year: 'numeric',
+                        month: 'long',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit'
+                      })}
+                    </Text>
+                    
+                    {/* Order Items */}
+                    <View style={styles.orderDetailsSection}>
+                      <Text style={styles.orderDetailsSectionTitle}>Items Ordered</Text>
+                      {customerOrderDetails.items?.map((item: OrderItem, index: number) => (
+                        <View key={index} style={styles.orderItemRow}>
+                          <View style={styles.orderItemInfo}>
+                            <Text style={styles.orderItemName}>{item.product.name}</Text>
+                            <Text style={styles.orderItemDescription}>{item.product.description}</Text>
+                          </View>
+                          <View style={styles.orderItemQuantity}>
+                            <Text style={styles.orderItemQtyText}>Qty: {item.quantity}</Text>
+                            <Text style={styles.orderItemPrice}>₦{(item.product.price * item.quantity).toLocaleString()}</Text>
+                          </View>
+                        </View>
+                      )) || (
+                        <View style={styles.orderItemRow}>
+                          <View style={styles.orderItemInfo}>
+                            <Text style={styles.orderItemName}>Single Item Order</Text>
+                            <Text style={styles.orderItemDescription}>Quantity: {customerOrderDetails.quantity}</Text>
+                          </View>
+                          <View style={styles.orderItemQuantity}>
+                            <Text style={styles.orderItemPrice}>₦{customerOrderDetails.total.toLocaleString()}</Text>
+                          </View>
+                        </View>
+                      )}
+                    </View>
+                    
+                    {/* Order Summary */}
+                    <View style={styles.orderDetailsSection}>
+                      <Text style={styles.orderDetailsSectionTitle}>Order Summary</Text>
+                      <View style={styles.orderSummaryRow}>
+                        <Text style={styles.orderSummaryLabel}>Subtotal:</Text>
+                        <Text style={styles.orderSummaryValue}>₦{customerOrderDetails.total.toLocaleString()}</Text>
+                      </View>
+                      <View style={styles.orderSummaryRow}>
+                        <Text style={styles.orderSummaryLabel}>Payment Method:</Text>
+                        <Text style={styles.orderSummaryValue}>{customerOrderDetails.paymentMethod || 'Cash on Delivery'}</Text>
+                      </View>
+                      <View style={[styles.orderSummaryRow, styles.orderTotalRow]}>
+                        <Text style={styles.orderTotalLabel}>Total:</Text>
+                        <Text style={styles.orderTotalValue}>₦{customerOrderDetails.total.toLocaleString()}</Text>
+                      </View>
+                    </View>
+                    
+                    {/* Delivery Information */}
+                    <View style={styles.orderDetailsSection}>
+                      <Text style={styles.orderDetailsSectionTitle}>Delivery Information</Text>
+                      <View style={styles.deliveryInfoRow}>
+                        <Text style={styles.deliveryInfoLabel}>📍 Address:</Text>
+                        <Text style={styles.deliveryInfoValue}>{customerOrderDetails.deliveryAddress}</Text>
+                      </View>
+                      <View style={styles.deliveryInfoRow}>
+                        <Text style={styles.deliveryInfoLabel}>📞 Phone:</Text>
+                        <Text style={styles.deliveryInfoValue}>{customerOrderDetails.deliveryPhone}</Text>
+                      </View>
+                    </View>
+                  </ScrollView>
+                )}
                 
                 <View style={styles.modalActions}>
                   <TouchableOpacity 
                     style={styles.modalCancelButton}
-                    onPress={() => {
-                      Keyboard.dismiss();
-                      setShowCustomerOrderModal(false);
-                    }}
+                    onPress={() => setShowCustomerOrderModal(false)}
                   >
-                    <Text style={styles.modalCancelButtonText}>Cancel</Text>
+                    <Text style={styles.modalCancelButtonText}>Close</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity 
-                    style={styles.modalConfirmButton}
-                    onPress={() => {
-                      Keyboard.dismiss();
-                      setShowCustomerOrderModal(false);
-                      setCustomerView('cart');
-                      proceedToCheckout();
-                    }}
-                  >
-                    <Text style={styles.modalConfirmButtonText}>Go to Checkout</Text>
-                  </TouchableOpacity>
+                  {customerOrderDetails && (
+                    <TouchableOpacity 
+                      style={styles.modalConfirmButton}
+                      onPress={() => {
+                        setShowCustomerOrderModal(false);
+                        // Reorder functionality
+                        if (customerOrderDetails.items) {
+                          customerOrderDetails.items.forEach((item: OrderItem) => {
+                            const product = adminProducts.find(p => p.id === item.product.id);
+                            if (product) {
+                              addToCart(product, item.quantity);
+                            }
+                          });
+                          Alert.alert('Added to Cart', `${customerOrderDetails.items.length} items added to your cart`);
+                          setCustomerView('cart');
+                        }
+                      }}
+                    >
+                      <Text style={styles.modalConfirmButtonText}>🔄 Reorder</Text>
+                    </TouchableOpacity>
+                  )}
                 </View>
               </View>
             </TouchableWithoutFeedback>
@@ -4077,6 +4147,126 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 15,
     marginTop: 25,
+  },
+  
+  // Order Details Modal Styles
+  orderDetailsScroll: {
+    maxHeight: 400,
+    marginBottom: 20,
+  },
+  orderDetailsHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  orderDetailsNumber: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#1E293B',
+  },
+  orderDetailsStatus: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+  },
+  orderDetailsStatusText: {
+    color: 'white',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  orderDetailsDate: {
+    fontSize: 14,
+    color: '#64748B',
+    marginBottom: 20,
+  },
+  orderDetailsSection: {
+    marginBottom: 20,
+  },
+  orderDetailsSectionTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1E293B',
+    marginBottom: 10,
+  },
+  orderItemRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  orderItemInfo: {
+    flex: 1,
+  },
+  orderItemName: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#1E293B',
+  },
+  orderItemDescription: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  orderItemQuantity: {
+    alignItems: 'flex-end',
+  },
+  orderItemQtyText: {
+    fontSize: 12,
+    color: '#64748B',
+  },
+  orderItemPrice: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#1E293B',
+    marginTop: 2,
+  },
+  orderSummaryRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 4,
+  },
+  orderSummaryLabel: {
+    fontSize: 14,
+    color: '#64748B',
+  },
+  orderSummaryValue: {
+    fontSize: 14,
+    color: '#1E293B',
+  },
+  orderTotalRow: {
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+    marginTop: 8,
+    paddingTop: 8,
+  },
+  orderTotalLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1E293B',
+  },
+  orderTotalValue: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#1E293B',
+  },
+  deliveryInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 8,
+  },
+  deliveryInfoLabel: {
+    fontSize: 14,
+    color: '#64748B',
+    width: 80,
+  },
+  deliveryInfoValue: {
+    fontSize: 14,
+    color: '#1E293B',
+    flex: 1,
   },
   modalCancelButton: {
     flex: 1,
