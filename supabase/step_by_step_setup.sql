@@ -1,0 +1,103 @@
+-- Step-by-Step Database Setup for ZADA Water Delivery App
+-- Run these commands one by one in your Supabase SQL editor
+
+-- Step 1: Enable extensions
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+-- Step 2: Create users table
+CREATE TABLE users (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  email TEXT UNIQUE NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('customer', 'admin')),
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Step 3: Create products table
+CREATE TABLE products (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  price DECIMAL(10,2) NOT NULL,
+  stock INTEGER NOT NULL DEFAULT 0,
+  min_stock INTEGER NOT NULL DEFAULT 10,
+  category TEXT NOT NULL,
+  supplier TEXT NOT NULL,
+  image TEXT NOT NULL,
+  description TEXT,
+  features JSONB DEFAULT '[]',
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Step 4: Create customers table
+CREATE TABLE customers (
+  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  email TEXT UNIQUE NOT NULL,
+  name TEXT NOT NULL,
+  phone TEXT,
+  address TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Step 5: Create orders table
+CREATE TABLE orders (
+  id TEXT PRIMARY KEY,
+  admin_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  customer_name TEXT NOT NULL,
+  customer_email TEXT,
+  customer_phone TEXT,
+  delivery_address TEXT NOT NULL,
+  delivery_zone TEXT NOT NULL,
+  total DECIMAL(10,2) NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('pending', 'confirmed', 'out_for_delivery', 'delivered')),
+  priority TEXT NOT NULL CHECK (priority IN ('low', 'medium', 'high')),
+  notes TEXT,
+  items JSONB NOT NULL DEFAULT '[]',
+  order_date TIMESTAMP WITH TIME ZONE NOT NULL,
+  estimated_delivery_time TEXT,
+  order_capacity INTEGER,
+  cluster_id TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Step 6: Create messages table
+CREATE TABLE messages (
+  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  order_id TEXT REFERENCES orders(id) ON DELETE CASCADE,
+  type TEXT NOT NULL CHECK (type IN ('support', 'order')),
+  sender_role TEXT NOT NULL CHECK (sender_role IN ('customer', 'admin')),
+  sender_id TEXT NOT NULL,
+  content TEXT NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Step 7: Create analytics table
+CREATE TABLE analytics (
+  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  metric_name TEXT NOT NULL,
+  metric_value DECIMAL(15,2) NOT NULL,
+  metric_type TEXT NOT NULL CHECK (metric_type IN ('revenue', 'orders', 'customers', 'inventory')),
+  period_start TIMESTAMP WITH TIME ZONE NOT NULL,
+  period_end TIMESTAMP WITH TIME ZONE NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Step 8: Insert sample data
+INSERT INTO users (id, name, email, role) VALUES 
+('admin-1', 'Admin User', 'admin@zada.com', 'admin'),
+('customer-1', 'John Doe', 'john@example.com', 'customer'),
+('customer-2', 'Jane Smith', 'jane@example.com', 'customer');
+
+INSERT INTO products (id, name, price, stock, min_stock, category, supplier, image, description, features) VALUES 
+('1', 'ZADA Pure Water 50cl', 100.00, 500, 50, 'water', 'ZADA Equipment', '💧', 'Pure, clean drinking water', '["Pure", "Clean", "Safe"]'),
+('2', 'ZADA Water Filter Cartridge', 2500.00, 25, 10, 'accessories', 'ZADA Equipment', '🔧', 'High-quality water filter', '["Durable", "Effective", "Long-lasting"]'),
+('3', 'ZADA Water Dispenser', 15000.00, 15, 5, 'equipment', 'ZADA Equipment', '🚰', 'Professional water dispenser', '["Professional", "Stainless Steel", "Easy to Use"]');
+
+-- Step 9: Grant permissions
+GRANT ALL ON ALL TABLES IN SCHEMA public TO anon;
+GRANT ALL ON ALL TABLES IN SCHEMA public TO authenticated;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO authenticated;
