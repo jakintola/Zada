@@ -744,6 +744,56 @@ export default function App() {
     })();
   }, [user?.id]);
 
+  // Real-time Business Intelligence Calculations
+  const calculateRealTimeAnalytics = () => {
+    const now = new Date();
+    const thisMonth = now.getMonth();
+    const lastMonth = thisMonth === 0 ? 11 : thisMonth - 1;
+    const thisYear = now.getFullYear();
+    
+    // Calculate monthly revenue
+    const thisMonthOrders = adminOrders.filter(order => {
+      const orderDate = new Date(order.orderDate);
+      return orderDate.getMonth() === thisMonth && orderDate.getFullYear() === thisYear;
+    });
+    const lastMonthOrders = adminOrders.filter(order => {
+      const orderDate = new Date(order.orderDate);
+      return orderDate.getMonth() === lastMonth && orderDate.getFullYear() === thisYear;
+    });
+    
+    const thisMonthRevenue = thisMonthOrders.reduce((sum, order) => sum + order.total, 0);
+    const lastMonthRevenue = lastMonthOrders.reduce((sum, order) => sum + order.total, 0);
+    const revenueGrowth = lastMonthRevenue > 0 ? ((thisMonthRevenue - lastMonthRevenue) / lastMonthRevenue) * 100 : 0;
+    
+    // Calculate order fulfillment rate
+    const totalOrders = adminOrders.length;
+    const deliveredOrders = adminOrders.filter(order => order.status === 'delivered').length;
+    const fulfillmentRate = totalOrders > 0 ? (deliveredOrders / totalOrders) * 100 : 0;
+    
+    // Calculate inventory turnover
+    const totalStockValue = products.reduce((sum, product) => sum + (product.price * product.stock), 0);
+    const monthlySales = thisMonthOrders.reduce((sum, order) => sum + order.total, 0);
+    const turnoverRate = totalStockValue > 0 ? (monthlySales / totalStockValue) * 12 : 0;
+    
+    // Calculate customer growth
+    const totalCustomers = users.filter(u => u.role === 'customer').length;
+    const thisMonthCustomers = users.filter(u => {
+      const userDate = new Date(u.createdAt || now);
+      return userDate.getMonth() === thisMonth && userDate.getFullYear() === thisYear;
+    }).length;
+    
+    return {
+      monthlyRevenue: thisMonthRevenue,
+      revenueGrowth: revenueGrowth,
+      fulfillmentRate: fulfillmentRate,
+      turnoverRate: turnoverRate,
+      totalCustomers: totalCustomers,
+      newCustomersThisMonth: thisMonthCustomers,
+      totalOrders: totalOrders,
+      deliveredOrders: deliveredOrders
+    };
+  };
+
   // Load products for all users
   useEffect(() => {
     (async () => {
@@ -774,6 +824,38 @@ export default function App() {
         }
       }
     })();
+  }, [user?.id, user?.role]);
+
+  // Real-time data sync between admin and customers
+  useEffect(() => {
+    const syncInterval = setInterval(async () => {
+      try {
+        // Sync products for all users
+        const currentProducts = await loadProducts();
+        setProducts(currentProducts);
+        
+        // Sync admin data if user is admin
+        if (user?.id && user?.role === 'admin') {
+          const userData = await loadUserAdminData(user.id);
+          setAdminProducts(userData.products);
+          setAdminOrders(userData.orders);
+        }
+        
+        // Sync customer orders
+        if (user?.id && user?.role === 'customer') {
+          const customerOrdersData = await storage.getItem(`@zada_user_${user.id}_customer_orders`);
+          if (customerOrdersData) {
+            setCustomerOrders(JSON.parse(customerOrdersData));
+          }
+        }
+        
+        console.log('Real-time sync completed');
+      } catch (error) {
+        console.error('Real-time sync failed:', error);
+      }
+    }, 5000); // Sync every 5 seconds
+    
+    return () => clearInterval(syncInterval);
   }, [user?.id, user?.role]);
 
   useEffect(() => {
@@ -1215,66 +1297,78 @@ export default function App() {
   };
 
   // Enhanced Order Status Update with Customer Sync
-  const updateOrderStatus = (orderId: string, newStatus: 'pending' | 'confirmed' | 'out_for_delivery' | 'delivered') => {
-    // Update admin orders
-    const updatedAdminOrders = adminOrders.map(order => 
-      order.id === orderId ? { ...order, status: newStatus } : order
-    );
-    
-    // Update the admin orders state to reflect changes in the UI
-    setAdminOrders(updatedAdminOrders);
-    
-    // Update customer orders if they exist
-    const updatedCustomerOrders = customerOrders.map(order => 
-      order.id === orderId ? { ...order, status: newStatus } : order
-    );
-    
-    // In a real app, this would be an API call
-    // For now, we'll update the local state
-    setCustomerOrders(updatedCustomerOrders);
-    
-    // Show success message
-    Alert.alert('Success', `Order status updated to ${newStatus}`);
-    
-    // Keep delivery routes in sync: when moving to out_for_delivery, attach to a route; when delivered, remove
-    const targetOrder = updatedAdminOrders.find(o => o.id === orderId);
-    if (targetOrder) {
-      if (newStatus === 'out_for_delivery') {
-        // Simple sync: ensure a route exists per zone and append order
-        setAdminDeliveryRoutes(prev => {
-          const existing = prev.find(r => r.zone === targetOrder.deliveryZone && r.status !== 'completed');
-          if (existing) {
-            const updated = { ...existing, orders: [...existing.orders, targetOrder.id], totalOrders: existing.totalOrders + 1 };
-            return prev.map(r => r.id === existing.id ? updated : r);
-          }
-          const newRoute: DeliveryRoute = {
-            id: `route-${Date.now()}`,
-            driver: 'Unassigned',
-            vehicle: 'TBD',
-            zone: targetOrder.deliveryZone,
-            orders: [targetOrder.id],
-            totalOrders: 1,
-            estimatedTime: '60 min',
-            startTime: 'Now',
-            endTime: 'TBD',
-            status: 'in_progress',
-            route: [{ orderId: targetOrder.id, address: targetOrder.deliveryAddress, customer: targetOrder.customerName, priority: targetOrder.priority, estimatedTime: 'TBD' }],
-            clusterId: targetOrder.clusterId || undefined,
-            totalValue: targetOrder.total,
-            totalCapacity: targetOrder.orderCapacity,
-          };
-          return [...prev, newRoute];
-        });
+  const updateOrderStatus = async (orderId: string, newStatus: 'pending' | 'confirmed' | 'out_for_delivery' | 'delivered') => {
+    try {
+      // Update admin orders
+      const updatedAdminOrders = adminOrders.map(order => 
+        order.id === orderId ? { ...order, status: newStatus, updatedAt: new Date() } : order
+      );
+      
+      // Update the admin orders state to reflect changes in the UI
+      setAdminOrders(updatedAdminOrders);
+      
+      // Update customer orders if they exist
+      const updatedCustomerOrders = customerOrders.map(order => 
+        order.id === orderId ? { ...order, status: newStatus, updatedAt: new Date() } : order
+      );
+      
+      // Update customer orders state
+      setCustomerOrders(updatedCustomerOrders);
+      
+      // Save to user-specific admin data
+      if (user?.id) {
+        await saveUserAdminData(user.id, adminProducts, updatedAdminOrders);
       }
-      if (newStatus === 'delivered') {
-        setAdminDeliveryRoutes(prev => prev.map(r => ({
-          ...r,
-          orders: r.orders.filter(id => id !== orderId),
-          totalOrders: r.orders.includes(orderId) ? Math.max(0, r.totalOrders - 1) : r.totalOrders,
-          route: r.route.filter(s => s.orderId !== orderId),
-          status: r.orders.length === 1 && r.orders[0] === orderId ? 'completed' : r.status,
-        })));
+      
+      // Show success message with status
+      const statusText = newStatus.replace('_', ' ').toUpperCase();
+      Alert.alert('Success', `Order #${orderId} status updated to ${statusText}`);
+      
+      console.log('Order status updated:', { orderId, newStatus, adminOrders: updatedAdminOrders.length });
+      
+      // Keep delivery routes in sync: when moving to out_for_delivery, attach to a route; when delivered, remove
+      const targetOrder = updatedAdminOrders.find(o => o.id === orderId);
+      if (targetOrder) {
+        if (newStatus === 'out_for_delivery') {
+          // Simple sync: ensure a route exists per zone and append order
+          setAdminDeliveryRoutes(prev => {
+            const existing = prev.find(r => r.zone === targetOrder.deliveryZone && r.status !== 'completed');
+            if (existing) {
+              const updated = { ...existing, orders: [...existing.orders, targetOrder.id], totalOrders: existing.totalOrders + 1 };
+              return prev.map(r => r.id === existing.id ? updated : r);
+            }
+            const newRoute: DeliveryRoute = {
+              id: `route-${Date.now()}`,
+              driver: 'Unassigned',
+              vehicle: 'TBD',
+              zone: targetOrder.deliveryZone,
+              orders: [targetOrder.id],
+              totalOrders: 1,
+              estimatedTime: '60 min',
+              startTime: 'Now',
+              endTime: 'TBD',
+              status: 'in_progress',
+              route: [{ orderId: targetOrder.id, address: targetOrder.deliveryAddress, customer: targetOrder.customerName, priority: targetOrder.priority, estimatedTime: 'TBD' }],
+              clusterId: targetOrder.clusterId || undefined,
+              totalValue: targetOrder.total,
+              totalCapacity: targetOrder.orderCapacity,
+            };
+            return [...prev, newRoute];
+          });
+        }
+        if (newStatus === 'delivered') {
+          setAdminDeliveryRoutes(prev => prev.map(r => ({
+            ...r,
+            orders: r.orders.filter(id => id !== orderId),
+            totalOrders: r.orders.includes(orderId) ? Math.max(0, r.totalOrders - 1) : r.totalOrders,
+            route: r.route.filter(s => s.orderId !== orderId),
+            status: r.orders.length === 1 && r.orders[0] === orderId ? 'completed' : r.status,
+          })));
+        }
       }
+    } catch (error) {
+      console.error('Failed to update order status:', error);
+      Alert.alert('Error', 'Failed to update order status');
     }
   };
 
@@ -1298,23 +1392,32 @@ export default function App() {
 
   // Inventory Management Functions
   const updateProductDetails = async (productId: string, updates: Partial<Product>) => {
-    const updatedProducts = products.map(product => 
-      product.id === productId ? { ...product, ...updates } : product
-    );
-    
-    // Update both products and adminProducts
-    setProducts(updatedProducts);
-    setAdminProducts(updatedProducts);
-    
-    // Save to storage
-    await saveProducts(updatedProducts);
-    
-    // Save to user-specific admin data
-    if (user?.id) {
-      await saveUserAdminData(user.id, updatedProducts, adminOrders);
+    try {
+      const updatedProducts = products.map(product => 
+        product.id === productId ? { ...product, ...updates } : product
+      );
+      
+      // Update both products and adminProducts
+      setProducts(updatedProducts);
+      setAdminProducts(updatedProducts);
+      
+      // Save to storage
+      await saveProducts(updatedProducts);
+      
+      // Save to user-specific admin data
+      if (user?.id) {
+        await saveUserAdminData(user.id, updatedProducts, adminOrders);
+      }
+      
+      // Show success message with specific update
+      const updateText = Object.keys(updates).map(key => `${key}: ${updates[key as keyof Product]}`).join(', ');
+      Alert.alert('Success', `Product updated: ${updateText}`);
+      
+      console.log('Product updated:', { productId, updates, newProducts: updatedProducts.length });
+    } catch (error) {
+      console.error('Failed to update product:', error);
+      Alert.alert('Error', 'Failed to update product details');
     }
-    
-    Alert.alert('Success', 'Product details updated successfully');
   };
 
   const addNewProduct = async (product: Omit<Product, 'id'>) => {
@@ -2705,209 +2808,64 @@ export default function App() {
               <View style={styles.ordersView}>
                 <View style={styles.sectionHeader}>
                   <Text style={styles.sectionTitle}>Support Inbox</Text>
-                  <Text style={styles.sectionSubtitle}>Customer support conversations</Text>
-                  <Text style={styles.debugInfo}>
-                    DEBUG: User role: {user?.role} | Current view: {currentView} | Supabase URL: {process.env.EXPO_PUBLIC_SUPABASE_URL ? 'Set' : 'Missing'}
-                  </Text>
+                  <Text style={styles.sectionSubtitle}>Real-time customer support conversations</Text>
                 </View>
                 
-                {/* Admin Chat Actions */}
+                {/* Real-time Support Stats */}
+                <View style={styles.supportStatsCard}>
+                  <Text style={styles.supportStatsTitle}>📊 Support Overview</Text>
+                  <View style={styles.supportStatsGrid}>
+                    <View style={styles.supportStatItem}>
+                      <Text style={styles.supportStatNumber}>{unreadMessages}</Text>
+                      <Text style={styles.supportStatLabel}>Unread Messages</Text>
+                    </View>
+                    <View style={styles.supportStatItem}>
+                      <Text style={styles.supportStatNumber}>{users.filter(u => u.role === 'customer').length}</Text>
+                      <Text style={styles.supportStatLabel}>Total Customers</Text>
+                    </View>
+                    <View style={styles.supportStatItem}>
+                      <Text style={styles.supportStatNumber}>{adminOrders.filter(o => o.status === 'pending').length}</Text>
+                      <Text style={styles.supportStatLabel}>Pending Orders</Text>
+                    </View>
+                  </View>
+                </View>
+                
+                {/* Quick Support Actions */}
                 <View style={styles.fullWidthCard}>
                   <TouchableOpacity
                     style={styles.adminChatButton}
-                    onPress={async () => {
-                      console.log('Loading support messages...');
-                      const { data, error } = await supabase
-                        .from('messages')
-                        .select('*')
-                        .eq('type', 'support')
-                        .order('created_at', { ascending: false })
-                        .limit(50);
-                      
-                      console.log('Support messages result:', { data, error });
-                      
-                      if (error) {
-                        Alert.alert('Error', 'Failed to load support messages: ' + error.message);
-                        return;
-                      }
-                      
-                      if (!data || data.length === 0) {
-                        Alert.alert('Support Inbox', 'No customer support messages yet.\\n\\nCustomers can contact support by tapping the \"Support\" button in the customer app.');
-                        return;
-                      }
-                      
-                      // Group by customer
-                      const grouped = data.reduce((acc: any, msg: any) => {
-                        const key = msg.sender_id || 'anonymous';
-                        if (!acc[key]) acc[key] = [];
-                        acc[key].push(msg);
-                        return acc;
-                      }, {});
-                      
-                      const conversations = Object.keys(grouped).map(senderId => ({
-                        customer: senderId,
-                        lastMessage: grouped[senderId][0],
-                        messageCount: grouped[senderId].length,
-                        lastTime: new Date(grouped[senderId][0].created_at).toLocaleString()
-                      }));
-                      
-                      const conversationList = conversations.map((c, i) => 
-                        `${i + 1}. ${c.customer}\\n   \"${c.lastMessage.content.substring(0, 50)}${c.lastMessage.content.length > 50 ? '...' : ''}\"\\n   ${c.messageCount} messages • ${c.lastTime}`
-                      ).join('\\n\\n');
-                      
-                      Alert.alert(
-                        `Support Conversations (${conversations.length})`,
-                        conversationList,
-                        [
-                          { text: 'Close' },
-                          { text: 'Open Support Chat', onPress: () => openSupportChat() }
-                        ]
-                      );
+                    onPress={() => {
+                      setShowNotification(false);
+                      clearUnreadMessages();
+                      openSupportChat();
                     }}
                   >
-                    <Text style={styles.adminChatButtonText}>📋 View All Support Conversations</Text>
+                    <Text style={styles.adminChatButtonText}>💬 Open Support Chat</Text>
+                    {unreadMessages > 0 && (
+                      <View style={styles.supportUnreadBadge}>
+                        <Text style={styles.supportUnreadText}>{unreadMessages}</Text>
+                      </View>
+                    )}
                   </TouchableOpacity>
                   
                   <TouchableOpacity
                     style={styles.adminChatButtonSecondary}
                     onPress={() => {
-                      console.log('Opening support chat as admin, user role:', user?.role);
-                      Alert.alert('Admin Chat Test', `User role: ${user?.role}\nChat functions available: ${typeof openSupportChat}\nSupabase configured: ${process.env.EXPO_PUBLIC_SUPABASE_URL ? 'Yes' : 'No'}`);
-                      openSupportChat();
-                    }}
-                  >
-                    <Text style={styles.adminChatButtonSecondaryText}>💬 Open Support Chat (TEST)</Text>
-                  </TouchableOpacity>
-                  
-                  <TouchableOpacity
-                    style={[styles.adminChatButton, { backgroundColor: '#F59E0B' }]}
-                    onPress={() => {
                       Alert.alert(
-                        'Database Connection Test',
-                        'This will test your Supabase connection',
-                        [
-                          { text: 'Cancel' },
-                          { 
-                            text: 'Test Connection', 
-                            onPress: async () => {
-                              try {
-                                console.log('Testing Supabase connection...');
-                                
-                                // Test 1: Try to query messages table
-                                const { data: messages, error: msgError } = await supabase
-                                  .from('messages')
-                                  .select('count', { count: 'exact' })
-                                  .limit(1);
-                                
-                                if (msgError) {
-                                  Alert.alert('Messages Table Error', `Error: ${msgError.message}\n\nThis means the messages table setup from earlier didn't work properly.`);
-                                  return;
-                                }
-                                
-                                // Test 2: Try to insert a test message
-                                const { error: insertError } = await supabase.from('messages').insert({
-                                  order_id: null,
-                                  type: 'support',
-                                  sender_role: 'admin',
-                                  sender_id: user?.email || 'admin@test.com',
-                                  content: `Connection test at ${new Date().toLocaleTimeString()}`
-                                });
-                                
-                                if (insertError) {
-                                  Alert.alert('Insert Test Failed', `Error: ${insertError.message}\n\nThe messages table exists but insert failed. Check your RLS policies.`);
-                                  return;
-                                }
-                                
-                                // Test 3: Try to query customers table
-                                const { data: customers, error: custError } = await supabase
-                                  .from('customers')
-                                  .select('count', { count: 'exact' })
-                                  .limit(1);
-                                
-                                const custStatus = custError ? 'Missing/Error' : 'OK';
-                                
-                                Alert.alert(
-                                  'Connection Test Results', 
-                                  `✅ Supabase Connected\n✅ Messages table: OK\n${custStatus === 'OK' ? '✅' : '❌'} Customers table: ${custStatus}\n\n${custStatus !== 'OK' ? 'Run the simple_setup.sql to create customers table!' : 'All tables ready!'}`
-                                );
-                                
-                              } catch (error) {
-                                Alert.alert('Connection Failed', `Failed to connect to Supabase:\n${error}`);
-                              }
-                            }
-                          }
-                        ]
+                        'Support Help',
+                        '💡 How to use Support Inbox:\n\n• Customers can contact support from their app\n• All messages appear in real-time here\n• Click "Open Support Chat" to respond\n• Messages sync instantly between admin and customers',
+                        [{ text: 'Got it!' }]
                       );
                     }}
                   >
-                    <Text style={styles.adminChatButtonText}>🧪 Test Database Connection</Text>
-                  </TouchableOpacity>
-                  
-                  {/* Order Chat Actions */}
-                  <TouchableOpacity
-                    style={styles.adminChatButton}
-                    onPress={async () => {
-                      console.log('Loading order messages...');
-                      const { data, error } = await supabase
-                        .from('messages')
-                        .select('*')
-                        .eq('type', 'order')
-                        .order('created_at', { ascending: false })
-                        .limit(50);
-                      
-                      console.log('Order messages result:', { data, error });
-                      
-                      if (error) {
-                        Alert.alert('Error', 'Failed to load order messages: ' + error.message);
-                        return;
-                      }
-                      
-                      if (!data || data.length === 0) {
-                        Alert.alert('Order Chats', 'No order chat messages yet.\\n\\nCustomers can chat about specific orders from their order history.');
-                        return;
-                      }
-                      
-                      // Group by order
-                      const grouped = data.reduce((acc: any, msg: any) => {
-                        const key = msg.order_id || 'unknown';
-                        if (!acc[key]) acc[key] = [];
-                        acc[key].push(msg);
-                        return acc;
-                      }, {});
-                      
-                      const orderChats = Object.keys(grouped).map(orderId => ({
-                        orderId,
-                        lastMessage: grouped[orderId][0],
-                        messageCount: grouped[orderId].length,
-                        lastTime: new Date(grouped[orderId][0].created_at).toLocaleString()
-                      }));
-                      
-                      const chatList = orderChats.map((c, i) => 
-                        `${i + 1}. Order #${c.orderId}\\n   \"${c.lastMessage.content.substring(0, 50)}${c.lastMessage.content.length > 50 ? '...' : ''}\"\\n   ${c.messageCount} messages • ${c.lastTime}`
-                      ).join('\\n\\n');
-                      
-                      Alert.alert(
-                        `Order Chats (${orderChats.length})`,
-                        chatList,
-                        [
-                          { text: 'Close' },
-                          ...(orderChats.length > 0 ? [{ 
-                            text: 'Open First Chat', 
-                            onPress: () => {
-                              console.log('Opening chat for order:', orderChats[0].orderId);
-                              openChatForOrder(orderChats[0].orderId);
-                            }
-                          }] : [])
-                        ]
-                      );
-                    }}
-                  >
-                    <Text style={styles.adminChatButtonText}>📦 View All Order Chats</Text>
+                    <Text style={styles.adminChatButtonSecondaryText}>❓ How to Use Support</Text>
                   </TouchableOpacity>
                   
                   <Text style={styles.supportInboxHelp}>
-                    💡 As an admin, you can:{'\n'}• View all customer support messages{'\n'}• Reply to order-specific chats{'\n'}• Monitor customer conversations in real-time
+                    💡 Real-time Support Features:{'\n'}• Instant message delivery between admin and customers{'\n'}• Live notifications for new messages{'\n'}• Automatic message sync across all devices{'\n'}• Support available 24/7 for all customers
                   </Text>
+                  
+                  {/* Order Chat Actions */}
                 </View>
               </View>
             )}
@@ -2915,61 +2873,141 @@ export default function App() {
             {currentView === 'analytics' && (
               <View style={styles.analyticsView}>
                 <Text style={styles.sectionTitle}>Business Intelligence</Text>
-                <View style={styles.analyticsGrid}>
-                  <View style={styles.analyticsCard}>
-                    <Text style={styles.analyticsTitle}>Revenue Trends</Text>
-                    <Text style={styles.analyticsValue}>₦2.45M</Text>
-                    <Text style={styles.analyticsSubtitle}>Monthly Revenue</Text>
-                    <View style={styles.trendIndicator}>
-                      <Text style={styles.trendText}>↗ +12.5% vs last month</Text>
+                <Text style={styles.sectionSubtitle}>Real-time analytics and insights</Text>
+                {(() => {
+                  const analytics = calculateRealTimeAnalytics();
+                  return (
+                    <View style={styles.analyticsGrid}>
+                      <View style={styles.analyticsCard}>
+                        <Text style={styles.analyticsTitle}>Revenue Trends</Text>
+                        <Text style={styles.analyticsValue}>₦{analytics.monthlyRevenue.toLocaleString()}</Text>
+                        <Text style={styles.analyticsSubtitle}>Monthly Revenue</Text>
+                        <View style={styles.trendIndicator}>
+                          <Text style={[styles.trendText, { color: analytics.revenueGrowth >= 0 ? '#10B981' : '#EF4444' }]}>
+                            {analytics.revenueGrowth >= 0 ? '↗' : '↘'} {Math.abs(analytics.revenueGrowth).toFixed(1)}% vs last month
+                          </Text>
+                        </View>
+                      </View>
+                      <View style={styles.analyticsCard}>
+                        <Text style={styles.analyticsTitle}>Customer Growth</Text>
+                        <Text style={styles.analyticsValue}>+{analytics.newCustomersThisMonth}</Text>
+                        <Text style={styles.analyticsSubtitle}>New Customers This Month</Text>
+                        <View style={styles.trendIndicator}>
+                          <Text style={styles.trendText}>📈 {analytics.totalCustomers} total customers</Text>
+                        </View>
+                      </View>
+                      <View style={styles.analyticsCard}>
+                        <Text style={styles.analyticsTitle}>Order Fulfillment</Text>
+                        <Text style={styles.analyticsValue}>{analytics.fulfillmentRate.toFixed(1)}%</Text>
+                        <Text style={styles.analyticsSubtitle}>Delivery Success Rate</Text>
+                        <View style={styles.trendIndicator}>
+                          <Text style={styles.trendText}>📦 {analytics.deliveredOrders}/{analytics.totalOrders} orders delivered</Text>
+                        </View>
+                      </View>
+                      <View style={styles.analyticsCard}>
+                        <Text style={styles.analyticsTitle}>Inventory Turnover</Text>
+                        <Text style={styles.analyticsValue}>{analytics.turnoverRate.toFixed(1)}x</Text>
+                        <Text style={styles.analyticsSubtitle}>Annual Rate</Text>
+                        <View style={styles.trendIndicator}>
+                          <Text style={styles.trendText}>🔄 Real-time calculation</Text>
+                        </View>
+                      </View>
                     </View>
-                  </View>
-                  <View style={styles.analyticsCard}>
-                    <Text style={styles.analyticsTitle}>Customer Growth</Text>
-                    <Text style={styles.analyticsValue}>+15.7%</Text>
-                    <Text style={styles.analyticsSubtitle}>New Customers</Text>
-                    <View style={styles.trendIndicator}>
-                      <Text style={styles.trendText}>↗ 134 new this month</Text>
-                    </View>
-                  </View>
-                  <View style={styles.analyticsCard}>
-                    <Text style={styles.analyticsTitle}>Order Fulfillment</Text>
-                    <Text style={styles.analyticsValue}>94.2%</Text>
-                    <Text style={styles.analyticsSubtitle}>On-time Delivery</Text>
-                    <View style={styles.trendIndicator}>
-                      <Text style={styles.trendText}>↗ +2.1% vs last month</Text>
-                    </View>
-                  </View>
-                  <View style={styles.analyticsCard}>
-                    <Text style={styles.analyticsTitle}>Inventory Turnover</Text>
-                    <Text style={styles.analyticsValue}>8.5x</Text>
-                    <Text style={styles.analyticsSubtitle}>Annual Rate</Text>
-                    <View style={styles.trendIndicator}>
-                      <Text style={styles.trendText}>↗ +0.3x vs last year</Text>
-                    </View>
-                  </View>
-                </View>
+                  );
+                })()}
               </View>
             )}
 
             {currentView === 'notifications' && (
               <View style={styles.notificationsView}>
                 <Text style={styles.sectionTitle}>System Notifications</Text>
-                <View style={styles.notificationCard}>
-                  <Text style={styles.notificationTitle}>Low Stock Alert</Text>
-                  <Text style={styles.notificationText}>ZADA Water Filter Cartridge stock is below minimum threshold</Text>
-                  <Text style={styles.notificationTime}>2 hours ago</Text>
-                </View>
-                <View style={styles.notificationCard}>
-                  <Text style={styles.notificationTitle}>High Priority Order</Text>
-                  <Text style={styles.notificationText}>New high-priority order from Victoria Island zone</Text>
-                  <Text style={styles.notificationTime}>1 hour ago</Text>
-                </View>
-                <View style={styles.notificationCard}>
-                  <Text style={styles.notificationTitle}>Delivery Route Update</Text>
-                  <Text style={styles.notificationText}>Optimized delivery route saves 15 minutes per delivery</Text>
-                  <Text style={styles.notificationTime}>3 hours ago</Text>
-                </View>
+                <Text style={styles.sectionSubtitle}>Real-time alerts and updates</Text>
+                {(() => {
+                  const now = new Date();
+                  const notifications = [];
+                  
+                  // Low stock notifications
+                  const lowStockProducts = products.filter(product => product.stock <= product.minStock);
+                  lowStockProducts.forEach(product => {
+                    notifications.push({
+                      id: `low-stock-${product.id}`,
+                      title: 'Low Stock Alert',
+                      text: `${product.name} stock is below minimum threshold (${product.stock}/${product.minStock})`,
+                      time: 'Just now',
+                      type: 'warning',
+                      priority: 'high'
+                    });
+                  });
+                  
+                  // High priority orders
+                  const highPriorityOrders = adminOrders.filter(order => order.priority === 'high' && order.status === 'pending');
+                  highPriorityOrders.forEach(order => {
+                    notifications.push({
+                      id: `high-priority-${order.id}`,
+                      title: 'High Priority Order',
+                      text: `New high-priority order #${order.id} from ${order.deliveryZone} zone`,
+                      time: 'Just now',
+                      type: 'urgent',
+                      priority: 'high'
+                    });
+                  });
+                  
+                  // Pending orders
+                  const pendingOrders = adminOrders.filter(order => order.status === 'pending');
+                  if (pendingOrders.length > 0) {
+                    notifications.push({
+                      id: 'pending-orders',
+                      title: 'Pending Orders',
+                      text: `${pendingOrders.length} orders awaiting confirmation`,
+                      time: 'Just now',
+                      type: 'info',
+                      priority: 'medium'
+                    });
+                  }
+                  
+                  // Delivery updates
+                  const outForDelivery = adminOrders.filter(order => order.status === 'out_for_delivery');
+                  if (outForDelivery.length > 0) {
+                    notifications.push({
+                      id: 'delivery-update',
+                      title: 'Delivery Status',
+                      text: `${outForDelivery.length} orders currently out for delivery`,
+                      time: 'Just now',
+                      type: 'info',
+                      priority: 'medium'
+                    });
+                  }
+                  
+                  // Recent deliveries
+                  const recentDeliveries = adminOrders.filter(order => {
+                    const orderDate = new Date(order.orderDate);
+                    const hoursAgo = (now.getTime() - orderDate.getTime()) / (1000 * 60 * 60);
+                    return order.status === 'delivered' && hoursAgo <= 24;
+                  });
+                  if (recentDeliveries.length > 0) {
+                    notifications.push({
+                      id: 'recent-deliveries',
+                      title: 'Recent Deliveries',
+                      text: `${recentDeliveries.length} orders delivered in the last 24 hours`,
+                      time: 'Just now',
+                      type: 'success',
+                      priority: 'low'
+                    });
+                  }
+                  
+                  return notifications.map(notification => (
+                    <View key={notification.id} style={[
+                      styles.notificationCard,
+                      notification.type === 'urgent' && styles.urgentNotification,
+                      notification.type === 'warning' && styles.warningNotification,
+                      notification.type === 'success' && styles.successNotification
+                    ]}>
+                      <Text style={styles.notificationTitle}>{notification.title}</Text>
+                      <Text style={styles.notificationText}>{notification.text}</Text>
+                      <Text style={styles.notificationTime}>{notification.time}</Text>
+                    </View>
+                  ));
+                })()}
               </View>
             )}
           </>
@@ -6980,6 +7018,57 @@ const styles = StyleSheet.create({
     color: 'white',
     fontSize: 16,
     fontWeight: 'bold',
+  },
+  
+  // Real-time Notification Styles
+  urgentNotification: {
+    borderLeftWidth: 4,
+    borderLeftColor: '#EF4444',
+    backgroundColor: '#FEF2F2',
+  },
+  warningNotification: {
+    borderLeftWidth: 4,
+    borderLeftColor: '#F59E0B',
+    backgroundColor: '#FFFBEB',
+  },
+  successNotification: {
+    borderLeftWidth: 4,
+    borderLeftColor: '#10B981',
+    backgroundColor: '#F0FDF4',
+  },
+  
+  // Support Stats Styles
+  supportStatsCard: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  supportStatsTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#1E293B',
+    marginBottom: 12,
+  },
+  supportStatsGrid: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+  },
+  supportStatItem: {
+    alignItems: 'center',
+  },
+  supportStatNumber: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#3B82F6',
+  },
+  supportStatLabel: {
+    fontSize: 12,
+    color: '#64748B',
+    textAlign: 'center',
+    marginTop: 4,
   },
   chatMessagesContainer: {
     flex: 1,
