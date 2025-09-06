@@ -32,7 +32,7 @@ interface CustomerProfile {
   created_at?: string;
   updated_at?: string;
 }
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { storage } from './storageUtils';
 
 // Get screen dimensions for responsive design
 const { width, height } = Dimensions.get('window');
@@ -110,7 +110,7 @@ const STORAGE_KEYS = {
 
 const loadUsersFromStorage = async (): Promise<AppUser[]> => {
   try {
-    const raw = await AsyncStorage.getItem(STORAGE_KEYS.users);
+    const raw = await storage.getItem(STORAGE_KEYS.users);
     return raw ? JSON.parse(raw) : [];
   } catch (e) {
     console.error('Failed to load users', e);
@@ -120,7 +120,7 @@ const loadUsersFromStorage = async (): Promise<AppUser[]> => {
 
 const saveUsersToStorage = async (users: AppUser[]) => {
   try {
-    await AsyncStorage.setItem(STORAGE_KEYS.users, JSON.stringify(users));
+    await storage.setItem(STORAGE_KEYS.users, JSON.stringify(users));
   } catch (e) {
     console.error('Failed to save users', e);
   }
@@ -128,7 +128,7 @@ const saveUsersToStorage = async (users: AppUser[]) => {
 
 const loadCurrentUser = async (): Promise<AppUser | null> => {
   try {
-    const raw = await AsyncStorage.getItem(STORAGE_KEYS.currentUser);
+    const raw = await storage.getItem(STORAGE_KEYS.currentUser);
     return raw ? JSON.parse(raw) : null;
   } catch (e) {
     console.error('Failed to load current user', e);
@@ -139,9 +139,9 @@ const loadCurrentUser = async (): Promise<AppUser | null> => {
 const saveCurrentUser = async (user: AppUser | null) => {
   try {
     if (user) {
-      await AsyncStorage.setItem(STORAGE_KEYS.currentUser, JSON.stringify(user));
+      await storage.setItem(STORAGE_KEYS.currentUser, JSON.stringify(user));
     } else {
-      await AsyncStorage.removeItem(STORAGE_KEYS.currentUser);
+      await storage.removeItem(STORAGE_KEYS.currentUser);
     }
   } catch (e) {
     console.error('Failed to save current user', e);
@@ -465,12 +465,15 @@ export default function App() {
         setUsers(storedUsers);
       }
       const current = await loadCurrentUser();
+      console.log('Loaded current user:', current);
       if (current) {
         setUser(current);
         setProfileName(current.name || '');
         setProfileEmail(current.email || '');
         setProfilePhone(current.phone || '');
         setProfileAddress(current.address || '');
+      } else {
+        console.log('No current user found, showing login screen');
       }
     })();
   }, []);
