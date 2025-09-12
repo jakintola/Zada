@@ -1,21 +1,48 @@
 import { createClient } from '@supabase/supabase-js';
+import { config, logConfigStatus } from './src/config/environment';
 
-// Expect these to be provided at runtime (Expo public env vars)
-const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL as string;
-const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY as string;
+// Log configuration status
+logConfigStatus();
 
-// Fallback values for development/testing
-const DEFAULT_URL = 'https://placeholder.supabase.co';
-const DEFAULT_KEY = 'placeholder-key';
-
-if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-  console.warn('Supabase env vars missing: EXPO_PUBLIC_SUPABASE_URL / EXPO_PUBLIC_SUPABASE_ANON_KEY');
-  console.log('Using placeholder values - app will work with mock data');
-}
-
+// Create Supabase client with proper configuration
 export const supabase = createClient(
-  SUPABASE_URL || DEFAULT_URL, 
-  SUPABASE_ANON_KEY || DEFAULT_KEY
+  config.SUPABASE_URL, 
+  config.SUPABASE_ANON_KEY,
+  {
+    auth: {
+      autoRefreshToken: true,
+      persistSession: true,
+      detectSessionInUrl: false
+    },
+    realtime: {
+      params: {
+        eventsPerSecond: 10
+      }
+    }
+  }
 );
+
+// Test connection
+export const testSupabaseConnection = async (): Promise<boolean> => {
+  try {
+    console.log('🔍 Testing Supabase connection...');
+    
+    const { data, error } = await supabase
+      .from('users')
+      .select('count')
+      .limit(1);
+
+    if (error) {
+      console.warn('⚠️ Supabase connection failed:', error.message);
+      return false;
+    }
+
+    console.log('✅ Supabase connection successful');
+    return true;
+  } catch (error) {
+    console.warn('⚠️ Supabase connection error:', error);
+    return false;
+  }
+};
 
 

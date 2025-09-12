@@ -9,18 +9,23 @@
     "web": "expo start --web"
   },
   "dependencies": {
+    "@expo/metro-runtime": "~5.0.4",
     "@react-native-async-storage/async-storage": "2.1.2",
     "@supabase/supabase-js": "^2.57.0",
+    "bcryptjs": "^3.0.2",
     "expo": "~53.0.22",
+    "expo-linear-gradient": "^14.1.5",
     "expo-status-bar": "~2.2.3",
+    "jsonwebtoken": "^9.0.2",
     "react": "19.0.0",
-    "react-native": "0.79.6",
     "react-dom": "19.0.0",
-    "react-native-web": "^0.20.0",
-    "@expo/metro-runtime": "~5.0.4"
+    "react-native": "0.79.6",
+    "react-native-web": "^0.20.0"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/jsonwebtoken": "^9.0.10",
     "@types/react": "~19.0.10",
     "typescript": "~5.8.3"
   },
