@@ -63,6 +63,7 @@ class DataManager {
       // Load products
       const products = await databaseService.getAllProducts();
       this.state.products = products;
+      console.log('📦 Products loaded:', products.map(p => ({ id: p.id, name: p.name })));
       
       // Load orders
       const orders = await databaseService.getAllOrders();
@@ -106,7 +107,8 @@ class DataManager {
       await this.saveProductsToStorage();
       this.notifyListeners();
       
-      console.log('✅ Product added successfully');
+      console.log('✅ Product added successfully. Total products:', this.state.products.length);
+      console.log('📦 Current products:', this.state.products.map(p => ({ id: p.id, name: p.name })));
     } catch (error) {
       console.error('❌ Error adding product:', error);
       throw error;

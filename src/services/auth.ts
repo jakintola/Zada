@@ -184,11 +184,15 @@ class AuthService {
     try {
       console.log('🚀 Initializing authentication system...');
       
-      // Clear existing data to force recreation (for testing)
-      await databaseService.clearAllData();
-      
-      // Initialize sample data
-      await databaseService.initializeSampleData();
+      // Check if data already exists before clearing
+      const existingProducts = await databaseService.getAllProducts();
+      if (existingProducts.length === 0) {
+        console.log('📦 No existing products found, initializing sample data...');
+        // Initialize sample data only if no products exist
+        await databaseService.initializeSampleData();
+      } else {
+        console.log(`📦 Found ${existingProducts.length} existing products, skipping sample data initialization`);
+      }
       
       // Check for existing user session
       const user = await this.getCurrentUser();

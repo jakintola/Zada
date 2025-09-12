@@ -1955,8 +1955,25 @@ export default function App() {
       <View style={styles.viewContainer}>
         <Text style={styles.viewTitle}>Our Products</Text>
         
-        <ScrollView style={styles.productsList}>
-          {products.map((product) => (
+        <ScrollView 
+          style={styles.productsList}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={async () => {
+                setRefreshing(true);
+                try {
+                  await syncData();
+                } catch (error) {
+                  console.error('Error refreshing data:', error);
+                } finally {
+                  setRefreshing(false);
+                }
+              }}
+            />
+          }
+        >
+          {products.length > 0 ? products.map((product) => (
             <View key={product.id} style={styles.productCard}>
               <View style={styles.productHeader}>
                 <Text style={styles.productIcon}>💧</Text>
@@ -1999,7 +2016,13 @@ export default function App() {
                 <Text style={styles.addToCartButtonText}>Add to Cart</Text>
               </TouchableOpacity>
             </View>
-          ))}
+          )) : (
+            <View style={styles.emptyState}>
+              <Ionicons name="water-outline" size={64} color={COLORS.gray} />
+              <Text style={styles.emptyText}>No products available yet</Text>
+              <Text style={styles.emptySubtext}>Check back later for new water products!</Text>
+            </View>
+          )}
         </ScrollView>
       </View>
     );
